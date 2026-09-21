@@ -424,6 +424,31 @@ The two sender steps are one question asked twice, and a gateway that answers
 both answers the same thing; the order between them is only which field is
 filled in on which route.
 
+### The two spellings of one id
+
+A gateway login carries the provider that issued it — `self-hosted:<uuid>`,
+`oidc:<sub>`, `basic:<name>` — and the app registers a person under the bare id
+`/api/auth/me` hands back: `<uuid>`, `<name>`. The same person, spelled two
+ways, and which way a section was written in depends on which end wrote it.
+
+So a **sender** matches an entry by either form: exact, the part after the
+first colon when the sender carries a prefix, or the prefixed entry when the
+sender is bare. Three things that rule deliberately does not do:
+
+- **It never splits a URL.** An OIDC subject may be a URL, and the colon in
+  `https://accounts.example.com/12345` is a scheme. A prefix is only read off a
+  colon that is not followed by `//`, so `oidc:https://…` loses the provider
+  and keeps the subject whole, and a bare `https://…` is left alone entirely.
+- **It never crosses providers.** `oidc:max` and `basic:max` are two logins
+  that happen to share a name, and are as likely to be two people as one.
+- **It gives up on a tie.** A bare `max` that fits both `basic:max` and
+  `oidc:max` names nobody, the same answer this module gives to every other
+  ambiguity.
+
+Only the sender is read this leniently. `context.default_user` and the app's
+own `default` are written by hand against the ids the app registers, so they
+are matched as written.
+
 ### Telling Hermes who is asking
 
 Hermes carries the identity of a turn in session variables, and tools read them:

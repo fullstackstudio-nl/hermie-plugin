@@ -19,6 +19,12 @@ in a `context` section. There is one key per person now — `hermie-app:<user id
 is dropped rather than guessed at — the same rule the registrations follow, for
 the same reason: what reaches here came off a gateway as a bag of JSON.
 
+The ids on the two sides of this are not spelled the same. A gateway login
+carries the provider that issued it — `self-hosted:<uuid>`, `oidc:<sub>`,
+`basic:<name>` — while the app registers a person under the bare id
+`/api/auth/me` hands back. `same_user` below is the one place that knows both
+forms name one person.
+
 Everything rendered is bounded. A system prompt section is prompt bytes charged
 on every turn of the session it was frozen into, so a user who pastes an essay
 into "about me" gets it truncated rather than getting a slower bot forever.
@@ -26,10 +32,19 @@ into "about me" gets it truncated rather than getting a slower bot forever.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 SECTION_VERSION = 1
+
+# The provider prefix on a gateway login, and the whole subtlety of reading it:
+# an OIDC subject may itself be a URL, and the colon in
+# `https://accounts.example.com/12345` is a scheme, not a provider. Requiring
+# that what follows is not `//` is what keeps such a subject whole — including
+# when it arrives prefixed, as `oidc:https://…`, where the first colon really
+# is the provider and the second really is not.
+PROVIDER_PREFIX = re.compile(r"^([A-Za-z][A-Za-z0-9._-]*):(?!//)(.+)$")
 
 # Per-field caps, applied before the whole-section cap, so one long field cannot
 # crowd out the short ones that identify the person.
@@ -67,6 +82,35 @@ class UserContext:
 class ContextSection:
     users: Dict[str, UserContext] = field(default_factory=dict)
     default_user: str = ""
+
+
+def split_provider(user_id: str) -> Tuple[str, str]:
+    """``("oidc", "<sub>")`` for a prefixed id, ``("", the id)`` for a bare one."""
+    match = PROVIDER_PREFIX.match(user_id or "")
+    return (match.group(1), match.group(2)) if match else ("", user_id or "")
+
+
+def same_user(one: str, other: str) -> bool:
+    """Whether two ids name one person, across the provider prefix.
+
+    Equal ids are one person. Otherwise exactly one of the two may carry a
+    prefix and the bare halves must match: `self-hosted:ef11…` is `ef11…`, and
+    `max` is `basic:max`.
+
+    Two *different* prefixes are two different logins and never match, however
+    alike the bare halves look. `oidc:max` and `basic:max` are as likely to be
+    two people as one, and this module would rather name nobody than the wrong
+    person — the same rule that makes `resolve` give up on a tie.
+    """
+    if not one or not other:
+        return False
+    if one == other:
+        return True
+    one_prefix, one_bare = split_provider(one)
+    other_prefix, other_bare = split_provider(other)
+    if bool(one_prefix) == bool(other_prefix):
+        return False
+    return one_bare == other_bare
 
 
 def _text(value: Any, limit: int) -> str:
@@ -152,6 +196,25 @@ def read_sections(items: Iterable[Tuple[str, Any]]) -> ContextSection:
     return ContextSection(users=users, default_user=default_user)
 
 
+def match_sender(section: ContextSection, sender_id: str) -> Optional[UserContext]:
+    """The registered person a sender names, in either form of the id.
+
+    Only the sender is read this leniently. It is the one id that arrives from
+    outside, spelled however the login spelled it; `context.default_user` and
+    the app's own `default` are written by hand against the ids the app itself
+    registers, so they are matched as written.
+
+    A bare sender can in principle fit two prefixed entries — `basic:max` and
+    `oidc:max` — and that is a tie, which names nobody.
+    """
+    if not sender_id:
+        return None
+    if sender_id in section.users:
+        return section.users[sender_id]
+    found = [user for user_id, user in section.users.items() if same_user(user_id, sender_id)]
+    return found[0] if len(found) == 1 else None
+
+
 def resolve(section: ContextSection, *, sender_id: str = "", configured_default: str = "") -> Optional[UserContext]:
     """Whose context to use.
 
@@ -160,9 +223,13 @@ def resolve(section: ContextSection, *, sender_id: str = "", configured_default:
     registered — that person. With several registered users and no way to tell
     who is asking, this returns nothing: showing a bot the wrong person's notes
     is worse than showing it none.
+
+    The sender is matched by `match_sender`, so a login that carries its
+    provider finds the person the app registered bare, and the other way round.
     """
-    if sender_id and sender_id in section.users:
-        return section.users[sender_id]
+    sender = match_sender(section, sender_id)
+    if sender is not None:
+        return sender
     if configured_default and configured_default in section.users:
         return section.users[configured_default]
     if section.default_user and section.default_user in section.users:

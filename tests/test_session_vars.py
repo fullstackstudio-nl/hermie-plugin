@@ -33,6 +33,10 @@ class FakeRuntime:
     def __init__(self, sections, settings=None):
         self.sections = sections
         self.settings = settings or {}
+        # The app's metadata is a file read on the agent's own path, so the
+        # module promises to do at most one a turn — and none at all when it
+        # already knows the answer. Counted, not assumed.
+        self.reads = 0
 
     def config(self, key, default=None):
         return self.settings.get(key, default)
@@ -41,6 +45,7 @@ class FakeRuntime:
         return "jurist"
 
     def app_sections(self):
+        self.reads += 1
         return self.sections
 
 
@@ -195,3 +200,39 @@ def test_a_gateway_without_the_session_variables_asks_nobody():
     module = module_for(two_people(), None)
 
     assert module.on_pre_llm_call(session_id="s1", sender_id="") is None
+
+
+# -- the login's provider prefix ---------------------------------------------
+
+
+def test_a_prefixed_login_is_written_as_the_gateway_spelled_it():
+    """The id is the gateway's fact; the name comes off the person it names."""
+    hermes = FakeSessionContext()
+    module = module_for([("ef11a9", bag({"ef11a9": {"displayName": "Sebas", "userIdAlt": "alt-1"}}))], hermes)
+
+    assert module.fill_session_vars("self-hosted:ef11a9", module.section) == {
+        USER_ID: "self-hosted:ef11a9", USER_ID_ALT: "alt-1", USER_NAME: "Sebas",
+    }
+
+
+def test_the_frozen_section_already_covers_the_same_person_under_either_spelling():
+    hermes = FakeSessionContext()
+    module = module_for(
+        [("", bag({"ef11a9": {"displayName": "Sebas"}, "ana": {"displayName": "Ana"}}, default="ef11a9"))],
+        hermes,
+    )
+
+    module.render_section({"session_id": "s1", "profile_name": "jurist"})
+    assert module.on_pre_llm_call(session_id="s1", sender_id="self-hosted:ef11a9") is None
+
+
+def test_a_covered_sender_is_recognised_without_re_reading_the_metadata():
+    """Either spelling of the frozen person ends the turn before the file read."""
+    hermes = FakeSessionContext(**{USER_ID: "self-hosted:ef11a9"})
+    runtime = FakeRuntime([("", bag({"ef11a9": {"displayName": "Sebas"}, "ana": {"displayName": "Ana"}}))])
+    module = ContextModule(runtime, session_vars=SessionVars(hermes))
+
+    assert "Sebas" in module.render_section({"session_id": "s1", "profile_name": "jurist"})
+    reads = runtime.reads
+    assert module.on_pre_llm_call(session_id="s1", sender_id="self-hosted:ef11a9") is None
+    assert runtime.reads == reads

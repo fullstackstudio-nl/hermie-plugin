@@ -46,7 +46,7 @@ import threading
 from typing import Any, Callable, Dict, List, Mapping, Optional
 
 from .. import contract
-from .render import ContextSection, read_sections, render, resolve
+from .render import ContextSection, read_sections, render, resolve, same_user
 from .session_vars import USER_ID, USER_ID_ALT, USER_NAME, SessionVars
 
 logger = logging.getLogger(__name__)
@@ -153,7 +153,10 @@ class ContextModule:
         user_id = sender_id or (user.user_id if user is not None else "")
         if not user_id:
             return {}
-        named = user if user is not None and user.user_id == user_id else None
+        # The id goes in as the gateway spelled it, prefix and all — it is a
+        # fact about this turn. The name only goes in when it is that same
+        # person's, which a provider prefix does not change.
+        named = user if user is not None and same_user(user.user_id, user_id) else None
         return self.session_vars.fill({
             USER_ID: user_id,
             USER_ID_ALT: named.user_id_alt if named is not None else "",
@@ -187,7 +190,7 @@ class ContextModule:
             session_id = str(kwargs.get("session_id") or "")
             with self.lock:
                 already = self.frozen_for.get(session_id, "")
-            if already and already == sender_id:
+            if already and same_user(already, sender_id):
                 return None
 
             section = section_of()

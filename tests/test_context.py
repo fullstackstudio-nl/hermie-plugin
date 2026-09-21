@@ -7,6 +7,7 @@ from hermie_plugin.context.render import (
     read_sections,
     render,
     resolve,
+    same_user,
 )
 
 
@@ -151,3 +152,89 @@ def test_per_user_keys_that_disagree_name_no_default():
     )
     assert section.default_user == ""
     assert resolve(section) is None
+
+
+# -- the login's provider prefix ---------------------------------------------
+#
+# The gateway hands out `self-hosted:<uuid>`, `oidc:<sub>` or `basic:<name>`;
+# the app registers the bare id `/api/auth/me` returns. One person, two
+# spellings, and the section may have been written in either of them.
+
+
+def test_a_self_hosted_login_finds_the_bare_id_the_app_registered():
+    section = read_section(bag({"ef11a9": user(displayName="Sebas"), "ana": user(displayName="Ana")}))
+    assert resolve(section, sender_id="self-hosted:ef11a9").display_name == "Sebas"
+
+
+def test_a_basic_login_finds_the_bare_name():
+    section = read_section(bag({"max": user(displayName="Max"), "ana": user(displayName="Ana")}))
+    assert resolve(section, sender_id="basic:max").display_name == "Max"
+
+
+def test_a_bare_sender_finds_the_prefixed_entry_the_app_stored():
+    section = read_section(bag({"basic:max": user(displayName="Max"), "ana": user(displayName="Ana")}))
+    assert resolve(section, sender_id="max").display_name == "Max"
+
+
+def test_the_exact_spelling_still_wins():
+    section = read_section(
+        bag({"oidc:max": user(displayName="Prefixed"), "max": user(displayName="Bare")})
+    )
+    assert resolve(section, sender_id="oidc:max").display_name == "Prefixed"
+    assert resolve(section, sender_id="max").display_name == "Bare"
+
+
+def test_a_url_shaped_subject_is_never_split_at_its_scheme():
+    """`https://…` has a colon that is a scheme, not a provider."""
+    section = read_section(
+        bag({"//accounts.example.com/12345": user(displayName="Nobody"), "ana": user(displayName="Ana")})
+    )
+    assert resolve(section, sender_id="https://accounts.example.com/12345") is None
+
+
+def test_a_url_shaped_subject_matches_itself_whole():
+    section = read_section(
+        bag({"https://accounts.example.com/12345": user(displayName="Sebas"), "ana": user(displayName="Ana")})
+    )
+    assert resolve(section, sender_id="https://accounts.example.com/12345").display_name == "Sebas"
+
+
+def test_the_provider_comes_off_a_url_subject_but_the_scheme_stays_on():
+    section = read_section(
+        bag({"https://accounts.example.com/12345": user(displayName="Sebas"), "ana": user(displayName="Ana")})
+    )
+    assert resolve(section, sender_id="oidc:https://accounts.example.com/12345").display_name == "Sebas"
+
+
+def test_a_prefixed_sender_never_borrows_a_different_persons_entry():
+    section = read_section(bag({"ef11a9": user(displayName="Sebas"), "ana": user(displayName="Ana")}))
+    assert resolve(section, sender_id="self-hosted:9999") is None
+
+
+def test_two_providers_are_two_logins_however_alike_the_names_look():
+    section = read_section(bag({"basic:max": user(displayName="Max"), "ana": user(displayName="Ana")}))
+    assert resolve(section, sender_id="oidc:max") is None
+
+
+def test_a_bare_sender_that_fits_two_logins_names_nobody():
+    section = read_section(
+        bag({"basic:max": user(displayName="Basic Max"), "oidc:max": user(displayName="OIDC Max")})
+    )
+    assert resolve(section, sender_id="max") is None
+
+
+def test_an_unknown_prefixed_sender_still_falls_back_to_the_default():
+    section = read_section(
+        bag({"ef11a9": user(displayName="Sebas"), "ana": user(displayName="Ana")}, default="ef11a9")
+    )
+    assert resolve(section, sender_id="oidc:9999").display_name == "Sebas"
+
+
+def test_the_prefix_is_only_read_off_something_shaped_like_one():
+    assert same_user("self-hosted:ef11a9", "ef11a9")
+    assert same_user("max", "basic:max")
+    assert not same_user("https://host/12345", "//host/12345")
+    assert not same_user("oidc:max", "basic:max")
+    assert not same_user(":max", "max")
+    assert not same_user("oidc:", "oidc")
+    assert not same_user("", "")
