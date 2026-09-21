@@ -21,6 +21,12 @@ plugin owns, it bumps their revisions, and it never touches a neighbouring key.
 holds a revision for it and will have its write rejected if the plugin bumps it
 behind the app's back. Everything the plugin publishes goes under its own
 `hermie-plugin` key, which no app version writes.
+
+The app is moving its own bag from one shared `hermie-app` key to one key per
+person, `hermie-app:<user id>` — the gateway identity the app resolved for the
+signed-in person, which is `owner` on a token gateway. Both are read here for
+one version. They are read in a fixed order, legacy first, and the order IS the
+precedence: the per-user key wins for the person it names.
 """
 
 from __future__ import annotations
@@ -30,12 +36,15 @@ import logging
 import os
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-# The key the app owns and the plugin only ever READS.
+# The keys the app owns and the plugin only ever READS. `hermie-app` is the one
+# shared bag every app version up to now wrote; `hermie-app:<user id>` is the
+# per-user bag it writes from now on.
 APP_KEY = "hermie-app"
+APP_KEY_PREFIX = APP_KEY + ":"
 
 # The key the plugin owns and is free to write.
 PLUGIN_KEY = "hermie-plugin"
@@ -76,6 +85,54 @@ def _load_yaml(path: Path) -> Dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def app_key_for(user_id: str) -> str:
+    """The ui_meta key holding one person's bag."""
+    return f"{APP_KEY_PREFIX}{user_id}" if user_id else APP_KEY
+
+
+def user_of_app_key(key: str) -> Optional[str]:
+    """Whose bag a key is: ``""`` for the legacy key, ``None`` for anything else."""
+    if key == APP_KEY:
+        return ""
+    if key.startswith(APP_KEY_PREFIX) and key[len(APP_KEY_PREFIX) :]:
+        return key[len(APP_KEY_PREFIX) :]
+    return None
+
+
+def is_app_key(key: str) -> bool:
+    """Whether this key belongs to the app rather than to the plugin."""
+    return user_of_app_key(key) is not None
+
+
+def read_meta(home: Optional[Path] = None) -> Dict[str, Any]:
+    """The whole ``ui_meta`` map, or ``{}`` when the profile cannot be read."""
+    try:
+        data = _load_yaml(profile_path(home))
+    except Exception:
+        return {}
+    meta = data.get("ui_meta")
+    return meta if isinstance(meta, dict) else {}
+
+
+def read_app_sections(home: Optional[Path] = None) -> List[Tuple[str, Any]]:
+    """Every bag the app owns on this profile, as ``(user id, value)``.
+
+    The legacy `hermie-app` comes first with an empty user id, then the per-user
+    keys in a stable order. **That order is the precedence**: a caller merges in
+    sequence and lets a later entry win, which makes the per-user key beat the
+    legacy one for the same person, the same device and the same heartbeat.
+    """
+    meta = read_meta(home)
+    out: List[Tuple[str, Any]] = []
+    if APP_KEY in meta:
+        out.append(("", meta[APP_KEY]))
+    for key in sorted(meta):
+        user_id = user_of_app_key(str(key))
+        if user_id:
+            out.append((user_id, meta[key]))
+    return out
+
+
 def read_key(key: str, home: Optional[Path] = None) -> Any:
     """One ``ui_meta`` key, or ``None`` when it is absent or unreadable."""
     try:
@@ -107,8 +164,8 @@ def write_key(key: str, value: Any, home: Optional[Path] = None) -> bool:
     DESIGN.md — it is narrow, this plugin writes rarely, and the only key it
     writes is one nothing else touches.
     """
-    if key == APP_KEY:
-        raise ValueError(f"hermie: refusing to write {APP_KEY!r}; that key belongs to the app")
+    if is_app_key(key):
+        raise ValueError(f"hermie: refusing to write {key!r}; that key belongs to the app")
 
     path = profile_path(home)
     try:

@@ -104,9 +104,10 @@ person sent a turn and picks their context. On a gateway with no authentication
 there is no user identity to read, so it uses the default — which is the right
 answer when one person is registered, and no answer at all when several are.
 
-> **On a shared gateway, read this.** Hermes' profile metadata is per profile,
-> not per user, so everyone with access to the gateway can see everyone else's
-> context section and push registrations. A push token is only an address; a
+> **On a shared gateway, read this.** The app keeps one metadata key per person,
+> but Hermes' profile metadata is per profile: every key on it is handed to every
+> client that can read the profile, so everyone with access to the gateway can
+> see everyone else's context section and push registrations. A push token is only an address; a
 > context section is a name, a device and whatever somebody wrote about
 > themselves. Do not fill it in on a gateway you share with people you would not
 > show it to.

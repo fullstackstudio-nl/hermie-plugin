@@ -34,7 +34,7 @@ import threading
 from typing import Any, Dict, Mapping, Optional
 
 from .. import contract
-from .render import ContextSection, read_section, render, resolve
+from .render import ContextSection, read_sections, render, resolve
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +60,7 @@ class ContextModule:
         return str(self.runtime.config("context.default_user", "") or "")
 
     def section(self) -> ContextSection:
-        return read_section(self.runtime.app_ui_meta())
+        return read_sections(self.runtime.app_sections())
 
     def capabilities(self) -> list:
         found = [contract.CAP_CONTEXT_PROMPT]

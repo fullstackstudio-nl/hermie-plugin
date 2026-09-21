@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional
 
 from .. import contract
 from . import events, expo, webpush
-from .registrations import Section, read_section
+from .registrations import Section, read_sections
 
 logger = logging.getLogger(__name__)
 
@@ -133,7 +133,7 @@ class PushModule:
     # -- delivery ------------------------------------------------------------
 
     def section(self) -> Section:
-        return read_section(self.runtime.app_ui_meta())
+        return read_sections(self.runtime.app_sections())
 
     def deliver(self, notification: events.Notification) -> int:
         """Send one notification to everybody who asked for it. Returns the count."""

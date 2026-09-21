@@ -7,14 +7,20 @@ that sends. They agree on the strict parts in particular: `v` is checked rather
 than assumed, an entry carrying the fields of both transports is a confusion
 rather than a choice, and an unreadable entry costs that entry and nothing else.
 
-The section lives under the app's own `hermie-app` key. The plugin reads it and
-never writes it.
+The section lives under the app's own key, and there is now one key per person:
+`hermie-app:<user id>`, with the older shared `hermie-app` still read for one
+version. `read_sections` merges them in the order `uimeta.read_app_sections`
+hands them over — legacy first — so the per-user key wins for the same device.
+Which person a registration belongs to is no longer a guess: it is the key it
+was found under, and it is carried on the registration as `user_id`.
+
+The plugin reads these keys and never writes them.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 SECTION_VERSION = 1
 
@@ -35,6 +41,9 @@ class Registration:
     token: Optional[str] = None
     endpoint: Optional[str] = None
     keys: Dict[str, str] = field(default_factory=dict)
+    # Whose device this is: the ui_meta key it was read from. Empty means the
+    # legacy shared key, which names nobody.
+    user_id: str = ""
 
     def wants(self, push_type: str) -> bool:
         return self.types.get(push_type, False)
@@ -59,7 +68,7 @@ def _types(value: Any) -> Dict[str, bool]:
     return {name: source.get(name) is True for name in PUSH_TYPES}
 
 
-def registration_of(installation_id: str, value: Any) -> Optional[Registration]:
+def registration_of(installation_id: str, value: Any, user_id: str = "") -> Optional[Registration]:
     """One registration, or nothing."""
     if not installation_id or not isinstance(value, dict):
         return None
@@ -75,6 +84,7 @@ def registration_of(installation_id: str, value: Any) -> Optional[Registration]:
 
     common = {
         "installation_id": installation_id,
+        "user_id": user_id,
         "platform": _text(value.get("platform")) or "unknown",
         "types": _types(value.get("types")),
         "preview": value.get("preview") is True,
@@ -92,8 +102,8 @@ def registration_of(installation_id: str, value: Any) -> Optional[Registration]:
     return None
 
 
-def read_section(app_key_value: Any) -> Section:
-    """The whole ``push`` section out of a ``hermie-app`` bag."""
+def read_section(app_key_value: Any, user_id: str = "") -> Section:
+    """The whole ``push`` section out of one app-owned bag."""
     if not isinstance(app_key_value, dict):
         return Section()
     push = app_key_value.get("push")
@@ -104,7 +114,7 @@ def read_section(app_key_value: Any) -> Section:
     registrations = [
         parsed
         for installation_id, value in rows.items()
-        if (parsed := registration_of(str(installation_id), value)) is not None
+        if (parsed := registration_of(str(installation_id), value, user_id)) is not None
     ]
     # A stable order, so a run's log and a test read the same twice.
     registrations.sort(key=lambda entry: entry.installation_id)
@@ -113,6 +123,27 @@ def read_section(app_key_value: Any) -> Section:
     seen = {str(key): _number(at) for key, at in raw_seen.items() if _number(at) > 0}
 
     return Section(registrations=registrations, seen=seen)
+
+
+def read_sections(items: Iterable[Tuple[str, Any]]) -> Section:
+    """One view over every app-owned bag, as ``(user id, value)`` pairs.
+
+    The pairs arrive in precedence order (legacy first), and a device is a
+    device: the same installation id in two keys is one registration, the later
+    one. That is what makes the move to per-user keys safe to do gradually —
+    while the app writes both, nobody is notified twice.
+    """
+    by_installation: Dict[str, Registration] = {}
+    seen: Dict[str, int] = {}
+    for user_id, value in items:
+        section = read_section(value, user_id)
+        for registration in section.registrations:
+            by_installation[registration.installation_id] = registration
+        seen.update(section.seen)
+    return Section(
+        registrations=sorted(by_installation.values(), key=lambda entry: entry.installation_id),
+        seen=seen,
+    )
 
 
 def someone_attached(section: Section, now: float, window_seconds: int) -> bool:

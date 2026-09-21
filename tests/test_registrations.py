@@ -1,6 +1,12 @@
 """The registration reader, which is the one place a bad bag of JSON arrives."""
 
-from hermie_plugin.push.registrations import Section, read_section, registration_of, someone_attached
+from hermie_plugin.push.registrations import (
+    Section,
+    read_section,
+    read_sections,
+    registration_of,
+    someone_attached,
+)
 
 
 def expo_entry(**overrides):
@@ -68,3 +74,39 @@ def test_seen_is_a_heartbeat_with_a_window():
     section = Section(seen={"i1": 1000})
     assert someone_attached(section, now=1050, window_seconds=90) is True
     assert someone_attached(section, now=1200, window_seconds=90) is False
+
+
+# -- one key per person ------------------------------------------------------
+
+
+def bag(*installation_ids, seen=None):
+    return {"push": {"registrations": {i: expo_entry() for i in installation_ids}, "seen": seen or {}}}
+
+
+def test_a_registration_knows_whose_key_it_came_from():
+    section = read_sections([("u1", bag("i1"))])
+    assert section.registrations[0].user_id == "u1"
+
+
+def test_the_legacy_key_names_nobody():
+    section = read_sections([("", bag("i1"))])
+    assert section.registrations[0].user_id == ""
+
+
+def test_both_keys_are_read_and_the_devices_add_up():
+    section = read_sections([("", bag("i1")), ("u1", bag("i2")), ("u2", bag("i3"))])
+    assert [(r.installation_id, r.user_id) for r in section.registrations] == [
+        ("i1", ""), ("i2", "u1"), ("i3", "u2")
+    ]
+
+
+def test_the_per_user_key_wins_for_the_same_device():
+    """While the app writes both, the device must not be notified twice."""
+    section = read_sections([("", bag("i1")), ("u1", bag("i1"))])
+    assert len(section.registrations) == 1
+    assert section.registrations[0].user_id == "u1"
+
+
+def test_a_missing_per_user_key_costs_nothing():
+    assert read_sections([]).registrations == []
+    assert read_sections([("u1", None), ("u2", {"push": "yes"})]).registrations == []

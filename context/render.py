@@ -1,7 +1,8 @@
 """Reading the device-context section, and turning it into prompt text.
 
-The app writes this under its own `hermie-app` ui_meta key, alongside the push
-registrations, in a `context` section:
+The app writes this under its own ui_meta key, alongside the push registrations,
+in a `context` section. There is one key per person now — `hermie-app:<user id>`
+— and the older shared `hermie-app` is still read for one version:
 
     {"context": {"v": 1,
                  "default": "<user id>",
@@ -25,7 +26,7 @@ into "about me" gets it truncated rather than getting a slower bot forever.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 SECTION_VERSION = 1
 
@@ -95,7 +96,7 @@ def user_of(user_id: str, value: Any) -> Optional[UserContext]:
 
 
 def read_section(app_key_value: Any) -> ContextSection:
-    """The whole ``context`` section out of a ``hermie-app`` bag."""
+    """The whole ``context`` section out of one app-owned bag."""
     if not isinstance(app_key_value, dict):
         return ContextSection()
     section = app_key_value.get("context")
@@ -111,6 +112,38 @@ def read_section(app_key_value: Any) -> ContextSection:
         if (parsed := user_of(str(user_id), value)) is not None
     }
     return ContextSection(users=users, default_user=_text(section.get("default"), 128))
+
+
+def read_sections(items: Iterable[Tuple[str, Any]]) -> ContextSection:
+    """One view over every app-owned bag, as ``(user id, value)`` pairs.
+
+    The pairs arrive in precedence order (legacy first) and a later one wins for
+    the person it names. A per-user key that carries a *different* person's
+    entry is still read — it costs nothing and an app mid-migration may well
+    have copied a whole bag across — but it never beats that person's own key.
+
+    The section-wide `default` is the legacy bag's, because a per-user bag can
+    only sensibly name itself. When there is no legacy bag and the per-user ones
+    agree on one name, that is used; when they disagree, nobody is the default
+    and `resolve` falls through to "the only registered person".
+    """
+    users: Dict[str, UserContext] = {}
+    owned: Dict[str, UserContext] = {}
+    legacy_default = ""
+    defaults = set()
+    for user_id, value in items:
+        section = read_section(value)
+        users.update(section.users)
+        if user_id and user_id in section.users:
+            owned[user_id] = section.users[user_id]
+        if section.default_user:
+            if user_id:
+                defaults.add(section.default_user)
+            else:
+                legacy_default = section.default_user
+    users.update(owned)
+    default_user = legacy_default or (next(iter(defaults)) if len(defaults) == 1 else "")
+    return ContextSection(users=users, default_user=default_user)
 
 
 def resolve(section: ContextSection, *, sender_id: str = "", configured_default: str = "") -> Optional[UserContext]:

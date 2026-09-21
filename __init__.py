@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from . import contract, uimeta
 from .state import State
@@ -85,9 +85,15 @@ class Runtime:
         except Exception:
             return "default"
 
-    def app_ui_meta(self) -> Any:
-        """The app's own `hermie-app` key, read from the profile on disk."""
-        return uimeta.read_key(uimeta.APP_KEY, self.home)
+    def app_sections(self) -> List[Tuple[str, Any]]:
+        """Every bag the app owns, as `(user id, value)`, in precedence order.
+
+        One key per person (`hermie-app:<user id>`) plus the older shared
+        `hermie-app`, which is read for one more version. The legacy bag comes
+        first and names nobody, so a caller that merges in order lets the
+        per-user key win for the person it names.
+        """
+        return uimeta.read_app_sections(self.home)
 
     @property
     def data_dir(self) -> Path:

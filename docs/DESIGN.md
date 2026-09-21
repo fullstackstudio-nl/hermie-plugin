@@ -132,6 +132,45 @@ Four rules make this work in both directions:
 The advert is removed on unload. A gateway that is killed rather than unloaded
 leaves it behind, which is what `updatedAt` is for.
 
+### The keys the app writes, and the move to one per person
+
+The app used to keep everything in one shared `hermie-app` key. It is moving to
+**one key per person**, `hermie-app:<user id>`, where `<user id>` is the gateway
+identity the app resolved for the signed-in person — `owner` on a token gateway.
+Push registrations and the `context` section are written there from now on.
+
+The plugin reads **both**, for one version:
+
+| | |
+|---|---|
+| `hermie-app:<user id>` | preferred, and it names the person it describes |
+| `hermie-app` | still read, names nobody, loses every tie |
+
+Merging is in one fixed order — legacy first, then the per-user keys sorted —
+and the order *is* the precedence. Two consequences, and both are the point:
+
+- **A device is a device.** The same installation id under two keys is one
+  registration, the per-user one. While the app writes both during the
+  migration, nobody is notified twice.
+- **A person is whoever their own key says.** A `context` entry for `u1` found
+  under `hermie-app:u2` is read — an app mid-migration may well have copied a
+  whole bag across — but it never beats what `hermie-app:u1` says about `u1`.
+
+The section-wide context `default` is taken from the legacy bag, because a
+per-user bag can only sensibly name itself. Without a legacy bag, per-user bags
+that agree on one name set it and per-user bags that disagree set nothing, which
+falls through to "the only registered person" and then to nobody.
+
+Which person a *hook* is about is unchanged: `sender_id` when the gateway named
+one, then `context.default_user`, then the app's own `default`, then the only
+registered person. What changed is that a registration now knows whose it is,
+because it knows which key it came from — that is what `mutes` is checked
+against, and what the push module means by "every device of a user".
+
+The plugin still writes none of these keys. `write_key` refuses `hermie-app` and
+every `hermie-app:<user id>` by the same rule and for the same reason: they carry
+the app's compare-and-swap revision.
+
 ### Modules
 
 One plugin, several modules, because a person installs a plugin once — asking
@@ -245,7 +284,7 @@ which is what this is for, the process outlives it.
 ## 4. Context
 
 The app writes a `context` section beside the push registrations under its own
-`hermie-app` key: per user a display name, free text, device model and OS, app
+key — `hermie-app:<user id>`, or the legacy `hermie-app` — per user a display name, free text, device model and OS, app
 version, timezone, locale, and optional per-bot notes.
 
 ### Which surface carries it
@@ -362,9 +401,11 @@ Unchanged from ADR-0017, with three differences, all of them reductions.
   here there is no such credential at all.
 - *Traffic analysis.* Apple, Google and any browser push service learn that a
   device received a notification, when, and from which server.
-- *`ui_meta` is per profile, not per user.* Two people on one gateway share the
-  `hermie-app` key, so each can see the other's registrations — and now each
-  other's context section as well. That section holds a display name, a device
+- *`ui_meta` is per profile, not per user.* The app's key is per person now
+  (`hermie-app:<user id>`), but `ui_meta` itself is not: every key on the
+  profile is handed to every client that can read the profile, so two people on
+  one gateway can still see each other's registrations and each other's context
+  section. That section holds a display name, a device
   model, a timezone and free text the person wrote about themselves, which is
   more personal than a push token. Anyone running a shared gateway should know
   that before filling it in; it is stated in the README and it is the reason the

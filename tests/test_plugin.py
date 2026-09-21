@@ -57,12 +57,19 @@ class FakeCtx:
         return [callback(**kwargs) for callback in self.hooks.get(name, [])]
 
 
-def gateway(tmp_path, *, app_meta=None, settings=None, profile="jurist"):
-    """A HERMES_HOME with a profile.yaml, the way an install looks."""
+def gateway(tmp_path, *, app_meta=None, per_user=None, settings=None, profile="jurist"):
+    """A HERMES_HOME with a profile.yaml, the way an install looks.
+
+    `app_meta` is the legacy shared `hermie-app` bag; `per_user` is the
+    `{user id: bag}` the app writes under `hermie-app:<user id>` from now on.
+    """
     home = tmp_path / "hermes"
     home.mkdir(parents=True, exist_ok=True)
+    meta = {"hermie-app": app_meta or {}}
+    for user_id, bag in (per_user or {}).items():
+        meta[f"hermie-app:{user_id}"] = bag
     (home / "profile.yaml").write_text(
-        yaml.safe_dump({"ui_meta": {"hermie-app": app_meta or {}}, "_ui_meta_revisions": {"hermie-app": 7}})
+        yaml.safe_dump({"ui_meta": meta, "_ui_meta_revisions": {"hermie-app": 7}})
     )
     return home, FakeCtx(home, settings=settings, profile=profile)
 
@@ -153,13 +160,61 @@ def test_unloading_takes_the_advert_down(tmp_path, monkeypatch):
     assert uimeta.read_key(uimeta.PLUGIN_KEY, home) is None
 
 
-def test_writing_the_app_key_is_refused_outright():
-    try:
-        uimeta.write_key(uimeta.APP_KEY, {"anything": True})
-    except ValueError as exc:
-        assert "belongs to the app" in str(exc)
-    else:
-        raise AssertionError("writing hermie-app should be refused")
+def test_writing_an_app_key_is_refused_outright():
+    for key in (uimeta.APP_KEY, uimeta.app_key_for("u1")):
+        try:
+            uimeta.write_key(key, {"anything": True})
+        except ValueError as exc:
+            assert "belongs to the app" in str(exc)
+        else:
+            raise AssertionError(f"writing {key} should be refused")
+
+
+def test_the_per_user_key_is_read_for_push_and_for_context(tmp_path, monkeypatch):
+    home, ctx = gateway(
+        tmp_path,
+        per_user={
+            "u1": {
+                "v": 1,
+                "push": {"registrations": {"i1": expo_registration()}},
+                "context": {"v": 1, "users": {"u1": {"displayName": "Sebas"}}},
+            }
+        },
+    )
+    monkeypatch.setattr(uimeta, "hermes_home", lambda: home)
+
+    import hermie_plugin.push as push_pkg
+
+    hermie_plugin.register(ctx)
+    assert "Sebas" in ctx.sections["hermie.device"]({"session_id": "s1", "profile_name": "jurist"})
+
+    module = push_pkg.PushModule(hermie_plugin.Runtime(ctx, home=home))
+    assert [r.user_id for r in module.section().registrations] == ["u1"]
+
+
+def test_a_device_in_both_keys_is_notified_once(tmp_path, monkeypatch):
+    """The app writes both while it migrates; that must not double a buzz."""
+    home, ctx = gateway(
+        tmp_path,
+        app_meta=app_meta_with(registrations={"i1": expo_registration()}),
+        per_user={"u1": {"v": 1, "push": {"registrations": {"i1": expo_registration()}}}},
+    )
+    monkeypatch.setattr(uimeta, "hermes_home", lambda: home)
+
+    import hermie_plugin.push as push_pkg
+
+    sent = []
+    monkeypatch.setattr(
+        push_pkg.expo, "send",
+        lambda batch: sent.extend(batch) or [
+            push_pkg.expo.Ticket(token=m["to"], status="ok", receipt_id="r") for m in batch
+        ],
+    )
+
+    module = push_pkg.PushModule(hermie_plugin.Runtime(ctx, home=home))
+    note = events.from_approval(bot="b", session_key="s", description="d", request_id="r", turn_id="t", at=10)
+    assert module.deliver(note) == 1
+    assert len(sent) == 1
 
 
 # -- push, end to end --------------------------------------------------------

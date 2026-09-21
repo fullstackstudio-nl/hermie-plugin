@@ -1,6 +1,13 @@
 """Whose context, and what it costs."""
 
-from hermie_plugin.context.render import ContextSection, UserContext, read_section, render, resolve
+from hermie_plugin.context.render import (
+    ContextSection,
+    UserContext,
+    read_section,
+    read_sections,
+    render,
+    resolve,
+)
 
 
 def bag(users, default=""):
@@ -97,3 +104,50 @@ def test_an_essay_is_truncated_rather_than_charged_every_turn():
 def test_fields_are_flattened_so_one_line_cannot_become_twenty():
     section = read_section(bag({"u1": user(displayName="Se\nbas\n\n\n")}))
     assert section.users["u1"].display_name == "Se bas"
+
+
+# -- one key per person ------------------------------------------------------
+
+
+def test_every_key_contributes_its_person():
+    section = read_sections(
+        [("u1", bag({"u1": user(displayName="Sebas")})), ("u2", bag({"u2": user(displayName="Ana")}))]
+    )
+    assert sorted(section.users) == ["u1", "u2"]
+
+
+def test_the_per_user_key_wins_over_the_legacy_one():
+    section = read_sections(
+        [
+            ("", bag({"u1": user(displayName="Stale"), "u2": user(displayName="Ana")})),
+            ("u1", bag({"u1": user(displayName="Sebas")})),
+        ]
+    )
+    assert section.users["u1"].display_name == "Sebas"
+    # And the person who has not moved yet is still there.
+    assert section.users["u2"].display_name == "Ana"
+
+
+def test_a_stranger_in_somebody_elses_key_never_beats_their_own():
+    section = read_sections(
+        [
+            ("u1", bag({"u1": user(displayName="Sebas"), "u2": user(displayName="Copied")})),
+            ("u2", bag({"u2": user(displayName="Ana")})),
+        ]
+    )
+    assert section.users["u2"].display_name == "Ana"
+
+
+def test_the_legacy_default_is_the_default():
+    section = read_sections(
+        [("", bag({"u1": user(), "u2": user()}, default="u2")), ("u1", bag({"u1": user()}, default="u1"))]
+    )
+    assert section.default_user == "u2"
+
+
+def test_per_user_keys_that_disagree_name_no_default():
+    section = read_sections(
+        [("u1", bag({"u1": user()}, default="u1")), ("u2", bag({"u2": user()}, default="u2"))]
+    )
+    assert section.default_user == ""
+    assert resolve(section) is None
