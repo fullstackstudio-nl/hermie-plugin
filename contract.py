@@ -68,7 +68,7 @@ import time
 from typing import Any, Dict, Iterable, List
 
 # The plugin's own release version. Also in plugin.yaml; a test keeps them equal.
-PLUGIN_VERSION = "0.1.0"
+PLUGIN_VERSION = "0.2.0"
 
 # The shape of the `hermie-plugin` ui_meta key. Bumped only when an existing
 # field changes meaning — adding a field does not bump it, because a reader that

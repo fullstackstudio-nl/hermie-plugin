@@ -109,7 +109,7 @@ own **`hermie-plugin`** key:
 ```yaml
 hermie-plugin:
   v: 1
-  version: 0.1.0
+  version: 0.2.0
   capabilities: [context.system_prompt, push.expo, push.mute, push.preview,
                  push.seen.per_chat, push.type.turn_done, push.type.turn_failed,
                  push.webpush, ui_meta.per_user]

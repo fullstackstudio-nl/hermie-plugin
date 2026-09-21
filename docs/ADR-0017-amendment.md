@@ -81,10 +81,11 @@ off, so no device that predates them starts receiving them.
 writes a richer advert under its **own** key, `hermie-plugin`:
 
 ```json
-{"v": 1, "version": "0.1.0",
- "capabilities": ["push.expo", "push.webpush", "push.preview",
-                  "push.type.turn_done", "push.type.turn_failed",
-                  "context.system_prompt"],
+{"v": 1, "version": "0.2.0",
+ "capabilities": ["push.expo", "push.webpush", "push.preview", "push.mute",
+                  "push.seen.per_chat", "push.type.turn_done",
+                  "push.type.turn_failed", "context.system_prompt",
+                  "ui_meta.per_user"],
  "modules": {"push": "on", "context": "on", "presence": "planned"},
  "updatedAt": 1790001453}
 ```
