@@ -1,0 +1,89 @@
+# Hermie plugin manifest.
+#
+# `name` is the registry id: every config key this plugin reads lives under
+# `plugins.entries.hermie.settings.*`, and every ui_meta key it writes is
+# `hermie-plugin`. Changing it renames both, so it does not change.
+name: hermie
+manifest_version: 2
+version: 0.1.0
+description: >-
+  Hermie's gateway-side companion: push notifications for bot messages, approval
+  and clarify requests, and cron deliveries, plus per-device context injected
+  into a bot's system prompt. Registrations and settings live in the gateway's
+  own profile ui_meta; nothing is sent to a third-party relay.
+author: FullStack Studio
+license: MIT
+homepage: https://github.com/fullstackstudio-nl/hermie-plugin
+kind: standalone
+tags:
+  - notifications
+  - push
+  - hermie
+platforms:
+  - linux
+  - macos
+  - windows
+
+# No third-party packages. Web Push signing uses `cryptography`, which ships in
+# the Hermes runtime; the plugin degrades to Expo-only when it is absent.
+python_dependencies: []
+
+# `hooks` is the human-facing list; `provides_hooks` is what `hermes plugins
+# doctor` checks the registration against, so the two are kept identical.
+hooks: &hooks
+  - post_llm_call
+  - on_session_end
+  - pre_approval_request
+  - pre_tool_call
+  - pre_llm_call
+provides_hooks: *hooks
+
+# Declared for `hermes plugins show`; the app reads the live set from ui_meta.
+emits: []
+listens: []
+
+config_schema:
+  modules.push:
+    type: bool
+    default: true
+    description: "Send push notifications to registered devices."
+  modules.context:
+    type: bool
+    default: true
+    description: "Inject per-device context into a bot's system prompt."
+  push.types:
+    type: list
+    default: ["message", "request", "dm", "cron", "turn_done", "turn_failed"]
+    description: "Event types this gateway may notify about at all."
+  push.preview:
+    type: str
+    default: "device"
+    description: >-
+      Whether a payload may carry message text: "never" forbids it gateway-wide,
+      "device" honours each registration's own `preview` flag.
+  push.attached_window_seconds:
+    type: int
+    default: 90
+    description: "How recent a device's `seen` heartbeat must be to suppress a message notification."
+  push.delay_seconds:
+    type: int
+    default: 5
+    description: "Grace period before a message notification is sent, so an opening app can claim it."
+  push.vapid_key_path:
+    type: str
+    default: ""
+    description: "PEM file holding the Web Push VAPID private key. Empty means the plugin's state directory."
+  push.vapid_contact:
+    type: str
+    default: ""
+    description: "mailto: or https: contact put in the VAPID JWT `sub` claim."
+  context.max_chars:
+    type: int
+    default: 1200
+    description: "Hard cap on the rendered device-context section."
+  context.default_user:
+    type: str
+    default: ""
+    description: >-
+      Which registered user's context to use when the gateway cannot say who
+      sent the prompt. Empty means the most recently active user.

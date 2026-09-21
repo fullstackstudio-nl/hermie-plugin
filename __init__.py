@@ -1,0 +1,161 @@
+"""Hermie's gateway-side companion.
+
+One plugin, several modules, one advert. `register(ctx)` builds a `Runtime` —
+the small surface every module is allowed to use, so a module never reaches into
+Hermes internals directly and a test can hand it a fake — then loads the modules
+that are switched on, collects what they can actually do, and publishes that as
+a capability list in the gateway's own `ui_meta`.
+
+Modules are the reason this is one plugin rather than several. A person installs
+a plugin once; asking them to install five is asking them to install none. So
+the ones that do not exist yet are still named here, still have a config key,
+and are advertised as `planned` — the app can tell "too old" from "switched off"
+from "not built yet" without the config surface changing shape when they land.
+"""
+
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+from . import contract, uimeta
+from .state import State
+
+logger = logging.getLogger(__name__)
+
+__version__ = contract.PLUGIN_VERSION
+
+# Modules that ship. `push` and `context` are on unless told otherwise; the rest
+# are named in contract.PLANNED_MODULES and load nothing.
+IMPLEMENTED = ("push", "context")
+
+
+class Runtime:
+    """Everything a module may touch, and nothing else.
+
+    Modules take this rather than `ctx` so that the places where the plugin
+    depends on Hermes are countable, and so the tests can drive a module with a
+    plain object instead of a gateway.
+    """
+
+    def __init__(self, ctx: Any, *, home: Optional[Path] = None, store: Any = None):
+        self.ctx = ctx
+        self.home = home or uimeta.hermes_home()
+        self.state = State(store if store is not None else self._store()).load()
+
+    def _store(self) -> Any:
+        """`ctx.state` when there is one, a file of our own when there is not.
+
+        `hermes plugins validate` calls `register()` against a context built for
+        probing, which has no state facade, and an older Hermes may not have one
+        either. Neither is a reason to fail to load.
+        """
+        try:
+            state = self.ctx.state
+            state.get  # a facade that cannot be read is not a store
+            return state
+        except Exception:
+            from .state import FileStore
+
+            directory = self.home / "plugin-data" / "hermie"
+            directory.mkdir(parents=True, exist_ok=True)
+            return FileStore(directory / "state.json")
+
+    def config(self, key: str, default: Any = None) -> Any:
+        """One setting, from `plugins.entries.hermie.settings.<key>`.
+
+        Hermes validates a setting against the manifest's `config_schema` and
+        warns on a mismatch, but it never merges the schema's `default` into the
+        config. The default that applies is the one passed here.
+        """
+        try:
+            return self.ctx.get_config(key, default)
+        except Exception:
+            return default
+
+    def bot_name(self) -> str:
+        """Which bot this is.
+
+        A Hermie bot is a Hermes profile, so the profile name is the name the
+        person sees in their chat list.
+        """
+        try:
+            return str(self.ctx.profile_name or "default")
+        except Exception:
+            return "default"
+
+    def app_ui_meta(self) -> Any:
+        """The app's own `hermie-app` key, read from the profile on disk."""
+        return uimeta.read_key(uimeta.APP_KEY, self.home)
+
+    @property
+    def data_dir(self) -> Path:
+        """Where the plugin may keep files of its own (the VAPID key, mostly)."""
+        try:
+            return Path(str(self.ctx.state.data_dir))
+        except Exception:
+            directory = self.home / "plugin-data" / "hermie"
+            directory.mkdir(parents=True, exist_ok=True)
+            return directory
+
+
+def module_states(runtime: Runtime) -> Dict[str, str]:
+    """Every module's name mapped to `on`, `off` or `planned`."""
+    states: Dict[str, str] = {}
+    for name in IMPLEMENTED:
+        states[name] = "on" if runtime.config(f"modules.{name}", True) else "off"
+    for name in contract.PLANNED_MODULES:
+        states[name] = "planned"
+    return states
+
+
+def publish(runtime: Runtime, states: Dict[str, str], capabilities: List[str]) -> None:
+    """Tell the app what this gateway can do.
+
+    Written under the plugin's own `hermie-plugin` key, never under `hermie-app`:
+    that one belongs to the app, which holds a compare-and-swap revision for it
+    and would have its next write rejected if the plugin bumped it from behind.
+    """
+    try:
+        uimeta.write_key(
+            uimeta.PLUGIN_KEY,
+            contract.advert(
+                modules=states,
+                capabilities=capabilities,
+                limits={"payloadBytes": 3500, "contextChars": int(runtime.config("context.max_chars", 1200) or 1200)},
+            ),
+            runtime.home,
+        )
+    except Exception as exc:
+        logger.warning("hermie: could not publish the plugin advert: %s", exc)
+
+
+def register(ctx: Any) -> None:
+    """Hermes calls this once, at load."""
+    runtime = Runtime(ctx)
+    states = module_states(runtime)
+    capabilities: List[str] = []
+
+    if states.get("push") == "on":
+        from . import push as push_module
+
+        capabilities.extend(push_module.register(ctx, runtime).capabilities())
+
+    if states.get("context") == "on":
+        from . import context as context_module
+
+        capabilities.extend(context_module.register(ctx, runtime).capabilities())
+
+    publish(runtime, states, capabilities)
+
+    # An advert that outlives the plugin is a lie the app would act on, so the
+    # key is removed on unload. A gateway that is killed rather than unloaded
+    # leaves it behind; the `updatedAt` stamp is how the app notices.
+    ctx.on_unload(lambda: uimeta.write_key(uimeta.PLUGIN_KEY, None, runtime.home))
+
+    logger.info(
+        "hermie %s loaded: %s",
+        contract.PLUGIN_VERSION,
+        ", ".join(f"{name}={state}" for name, state in sorted(states.items()) if state != "planned"),
+    )
