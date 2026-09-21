@@ -95,6 +95,15 @@ class Runtime:
         """
         return uimeta.read_app_sections(self.home)
 
+    def app_stamp(self) -> Tuple[int, int]:
+        """Whether anything the app wrote could have moved, in one `stat`.
+
+        `app_sections` parses YAML, and the context module sits on the agent's
+        own path where it would rather ask a cheap question first. See
+        `uimeta.profile_stamp` for what the answer is worth.
+        """
+        return uimeta.profile_stamp(self.home)
+
     @property
     def data_dir(self) -> Path:
         """Where the plugin may keep files of its own (the VAPID key, mostly)."""

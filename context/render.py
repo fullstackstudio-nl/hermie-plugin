@@ -269,12 +269,38 @@ def resolve(section: ContextSection, *, sender_id: str = "", configured_default:
     )[0]
 
 
-def render(user: Optional[UserContext], *, bot: str = "", max_chars: int = 1200) -> str:
+# Said when this text is reaching a session whose frozen section describes the
+# same person as they were earlier. Both copies are in the prompt at that point
+# — core cannot be asked to re-render a frozen section — so the newer one has to
+# say which of the two wins, or a model is left to guess between two profiles of
+# one person and may well average them.
+SUPERSEDES = (
+    "The person has changed this since this chat began. "
+    "It replaces what the system prompt says about them."
+)
+
+# And when they emptied it. A frozen section cannot be taken back out of a
+# system prompt — core renders it once and replays it verbatim — so the only
+# thing left is to say out loud that it no longer holds. Somebody who deletes
+# what they wrote about themselves has usually deleted it on purpose.
+RETRACTED = (
+    "The person has removed the background they had set about themselves. "
+    "Disregard what the system prompt says about them; there is nothing there now."
+)
+
+
+def render(
+    user: Optional[UserContext], *, bot: str = "", max_chars: int = 1200, supersedes: bool = False
+) -> str:
     """The prompt text for one person, or an empty string.
 
     Empty matters: `register_system_prompt_section` renders into the prompt
     verbatim, and a heading with nothing under it teaches a model that the
     section is noise.
+
+    `supersedes` marks a copy that is replacing an older one already frozen into
+    this session's system prompt. It is part of the bounded text rather than
+    something a caller glues on afterwards, so the cap covers it.
     """
     if user is None:
         return ""
@@ -306,8 +332,14 @@ def render(user: Optional[UserContext], *, bot: str = "", max_chars: int = 1200)
     if note:
         lines.append(f"What they told you specifically about this chat: {note}")
 
+    # Emptiness is decided on what the person actually wrote, before the two
+    # framing lines are added: a section that is nothing but framing is a
+    # heading with nothing under it, which teaches a model that it is noise.
     if not lines:
         return ""
+
+    if supersedes:
+        lines.insert(0, SUPERSEDES)
 
     # The reader is a model, and a model that is not told where a fact came from
     # will treat it as an instruction. This is the person's own description of

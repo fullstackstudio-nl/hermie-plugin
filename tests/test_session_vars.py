@@ -48,6 +48,24 @@ class FakeRuntime:
         # module promises to do at most one a turn — and none at all when it
         # already knows the answer. Counted, not assumed.
         self.reads = 0
+        # Stands in for `profile.yaml`'s (mtime_ns, size). Moving it is how a
+        # test says "the person edited their profile"; leaving it alone is how
+        # it says "nothing happened", which is every ordinary turn.
+        self.stamp = (1, 1)
+        self.stamps = 0
+
+    def app_stamp(self):
+        self.stamps += 1
+        return self.stamp
+
+    def edited(self, sections):
+        """The app wrote a new bag: the file moved and now says something else."""
+        self.sections = sections
+        self.stamp = (self.stamp[0] + 1, self.stamp[1])
+
+    def touched(self):
+        """The file moved without this module's section changing a word."""
+        self.stamp = (self.stamp[0] + 1, self.stamp[1])
 
     def config(self, key, default=None):
         return self.settings.get(key, default)

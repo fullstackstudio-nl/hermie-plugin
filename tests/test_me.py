@@ -31,6 +31,9 @@ class FakeRuntime:
     def app_sections(self):
         return self.sections
 
+    def app_stamp(self):
+        return (1, 1)
+
 
 def bag(users, default=""):
     return {"context": {"v": 1, "default": default, "users": users}}

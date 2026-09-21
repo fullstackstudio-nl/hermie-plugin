@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 from .. import contract
@@ -52,6 +53,7 @@ from .render import (
     BY_HOOK,
     BY_LIVE_SESSION,
     BY_SESSION_VARS,
+    RETRACTED,
     ContextSection,
     read_sections,
     render,
@@ -74,6 +76,29 @@ NAME = "context"
 
 SECTION_ID = "hermie.device"
 
+# How many sessions' frozen sections are remembered. A gateway that is up for
+# months sees an unbounded number of session ids, and a record per session is a
+# leak with a slow fuse. Losing the oldest costs a redundant re-injection on a
+# chat nobody has touched in a thousand sessions, which is the cheap direction.
+FROZEN_SESSIONS = 512
+
+
+@dataclass(frozen=True)
+class Frozen:
+    """What went into one session's system prompt, and when.
+
+    `stamp` is the app's `profile.yaml` as it stood when the section was
+    rendered, so a turn can ask "could this have changed?" with one `stat`
+    rather than a YAML parse. `text` is what was actually frozen, so the answer
+    to "did it change?" is a comparison rather than a guess — a write that
+    touches somebody else's push registration moves the stamp without changing
+    a word of this, and that must not cost a turn an injection.
+    """
+
+    user_id: str
+    text: str
+    stamp: Tuple[int, int]
+
 
 class ContextModule:
     def __init__(
@@ -85,9 +110,10 @@ class ContextModule:
         self.runtime = runtime
         self.session_vars = session_vars if session_vars is not None else SessionVars()
         self.live_sessions = live_sessions if live_sessions is not None else LiveSessions()
-        # session id -> the user id whose context the frozen section describes.
-        # Used to answer "is this sender the one the section already covers?".
-        self.frozen_for: Dict[str, str] = {}
+        # session id -> what the frozen section says, as it was frozen. It
+        # answers two questions: "is this sender the one the section already
+        # covers?" and "does the section still say what the app says?".
+        self.frozen: Dict[str, Frozen] = {}
         self.lock = threading.Lock()
         # Set at registration: a capability is advertised once the thing it
         # names is actually there, never because the code for it shipped.
@@ -155,7 +181,11 @@ class ContextModule:
         return read_sections(self.runtime.app_sections())
 
     def capabilities(self) -> list:
-        found = [contract.CAP_CONTEXT_PROMPT]
+        # `context.live` is claimed unconditionally once this module is on: the
+        # per-turn hook is registered below whatever else failed, and it is the
+        # half that carries an edit. A gateway whose prompt section never
+        # registered at all is a gateway where every turn is a live one.
+        found = [contract.CAP_CONTEXT_PROMPT, contract.CAP_CONTEXT_LIVE]
         if any(user.per_bot for user in self.section().users.values()):
             found.append(contract.CAP_CONTEXT_PER_BOT)
         if self.command_registered:
@@ -169,6 +199,21 @@ class ContextModule:
         return me_command.answer(self, raw_args)
 
     # -- the frozen section --------------------------------------------------
+
+    def remember(self, session_id: str, user_id: str, text: str, stamp: Tuple[int, int]) -> None:
+        """Record what this session's prompt now says about a person."""
+        with self.lock:
+            # Re-inserting rather than assigning moves this session to the back
+            # of the queue, so the one evicted is the one nothing has touched
+            # for longest rather than the one that merely started earliest.
+            self.frozen.pop(session_id, None)
+            self.frozen[session_id] = Frozen(user_id=user_id, text=text, stamp=stamp)
+            while len(self.frozen) > FROZEN_SESSIONS:
+                self.frozen.pop(next(iter(self.frozen)))
+
+    def frozen_section(self, session_id: str) -> Optional[Frozen]:
+        with self.lock:
+            return self.frozen.get(session_id)
 
     def render_section(self, session_info: Mapping[str, Any]) -> str:
         """Called by core once per session, while the prompt is being built.
@@ -184,16 +229,20 @@ class ContextModule:
         """
         try:
             bot = str(session_info.get("profile_name") or "") or self.runtime.bot_name()
+            # The stamp is taken BEFORE the read, so an edit that lands between
+            # the two is remembered as older than it is and is noticed on the
+            # next turn. The other order would swallow it for the session.
+            stamp = self.runtime.app_stamp()
             section = self.section()
             user = resolve(
                 section,
                 sender_id=self.sender(session_id=str(session_info.get("session_id") or "")),
                 configured_default=self.configured_default,
             )
+            text = render(user, bot=bot, max_chars=self.max_chars)
             if user is not None:
-                with self.lock:
-                    self.frozen_for[str(session_info.get("session_id") or "")] = user.user_id
-            return render(user, bot=bot, max_chars=self.max_chars)
+                self.remember(str(session_info.get("session_id") or ""), user.user_id, text, stamp)
+            return text
         except Exception as exc:
             # A raising section callable costs core the whole plugin-section
             # block, so this one never raises.
@@ -238,8 +287,50 @@ class ContextModule:
 
     # -- the per-turn top-up -------------------------------------------------
 
+    def refresh(
+        self, session_id: str, frozen: Frozen, sender_id: str, section_of: Callable[[], ContextSection]
+    ) -> Optional[Dict[str, str]]:
+        """The same person, after they edited their profile mid-chat.
+
+        The section in the system prompt was rendered once and core will not
+        render it again until the session is rebuilt, so an edit made during a
+        long Bot Chat would otherwise reach the bot on its *next* chat. This is
+        the turn-shaped half of the same answer: the newer text rides the user
+        message, saying which of the two copies wins.
+
+        It is gated on the app's `profile.yaml` having actually moved, which is
+        one `stat`. On the overwhelmingly common turn — nobody edited anything
+        — this costs that one syscall and reads nothing.
+        """
+        stamp = self.runtime.app_stamp()
+        if stamp == frozen.stamp:
+            return None
+
+        user = resolve(section_of(), sender_id=sender_id, configured_default=self.configured_default)
+        text = render(user, bot=self.runtime.bot_name(), max_chars=self.max_chars)
+        if text == frozen.text:
+            # The file moved for something else entirely — a push registration,
+            # a heartbeat, another person's bag. Remember the new stamp so this
+            # is looked at once rather than on every turn from here on.
+            self.remember(session_id, frozen.user_id, frozen.text, stamp)
+            return None
+
+        self.remember(session_id, user.user_id if user is not None else frozen.user_id, text, stamp)
+        if text:
+            return {"context": render(
+                user, bot=self.runtime.bot_name(), max_chars=self.max_chars, supersedes=True
+            )}
+        # They emptied it. The frozen copy cannot be taken back out of the
+        # system prompt, so the only honest thing left is to say it is gone.
+        return {"context": RETRACTED}
+
     def on_pre_llm_call(self, **kwargs: Any) -> Optional[Dict[str, str]]:
-        """Contribute context only for a sender the frozen section does not cover."""
+        """Contribute context the frozen section does not already carry.
+
+        Two ways it can fail to: the person sending this turn is not the one
+        the section describes, or they are that person and have since changed
+        what it says.
+        """
         try:
             session_id = str(kwargs.get("session_id") or "")
             sender_id = self.sender(str(kwargs.get("sender_id") or ""), session_id)
@@ -254,14 +345,19 @@ class ContextModule:
 
             self.fill_session_vars(sender_id, section_of)
 
+            frozen = self.frozen_section(session_id)
+            # "Covers this turn" includes the turn that names nobody: an
+            # ungated gateway is the single-user install, where the section
+            # resolved a person without being told one and an edit to that
+            # person is exactly the edit that must get through.
+            if frozen is not None and (not sender_id or same_user(frozen.user_id, sender_id)):
+                return self.refresh(session_id, frozen, sender_id, section_of)
+
             if not sender_id:
-                # An ungated gateway names nobody. The frozen section is all
-                # there is, and it is already in the prompt.
+                # Nobody named, and no section to be stale. There is nothing
+                # this path could work out that the frozen one did not.
                 return None
-            with self.lock:
-                already = self.frozen_for.get(session_id, "")
-            if already and same_user(already, sender_id):
-                return None
+            already = frozen.user_id if frozen is not None else ""
 
             section = section_of()
             user = resolve(section, sender_id=sender_id, configured_default=self.configured_default)

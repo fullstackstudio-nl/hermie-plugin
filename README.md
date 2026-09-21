@@ -37,6 +37,34 @@ Tapping Allow does not approve anything by itself. The app opens, connects to
 the gateway, re-reads the open requests, and answers only if that request is
 still open and still says what the notification said it did.
 
+## Capabilities
+
+The app does not test this plugin's version number. It reads a list of strings
+out of the gateway's own `ui_meta`, under the `hermie-plugin` key, and asks for
+a feature only when the string naming it is there. A capability is published
+only when it can be honoured **on this gateway** — Web Push only where the
+signing library imports, a type only where it is switched on — because a button
+that cannot work is worse than one that is absent.
+
+| Capability | Means |
+|---|---|
+| `push.expo` | Expo notifications can be sent |
+| `push.webpush` | Web Push can be signed here |
+| `push.preview` | a device may ask for message text in its payload |
+| `push.mute` | a mute written by the app will be obeyed |
+| `push.seen.per_chat` | a `{bot, at}` heartbeat is understood, so suppression is per chat |
+| `push.type.turn_done` | "a turn finished" is switched on |
+| `push.type.turn_failed` | "a turn failed" is switched on |
+| `ui_meta.per_user` | `hermie-app:<user id>` is read, so the app may move its bag |
+| `context.system_prompt` | context is put into the bot's system prompt |
+| `context.per_bot` | a per-bot note is rendered for the bot it names |
+| `context.live` | a context edit reaches an **open** chat on its next turn |
+| `command.me` | `/me` was accepted by this gateway |
+
+An absent list means an absent plugin. A plugin too old to publish one, a
+plugin that is installed but disabled, and no plugin at all are
+indistinguishable, and all three mean the same thing: do not offer the feature.
+
 ## Requirements
 
 - Hermes with the plugin hook surface (0.21 or newer; tested on 0.21.x).
@@ -107,6 +135,13 @@ The app can store, per person: a display name, free text about themselves,
 device model and OS, app version, timezone and locale, and optional per-bot
 notes. The plugin puts that in the bot's system prompt once per session, so it
 does not appear in the transcript and does not grow with the conversation.
+
+**Changing it reaches a chat that is already open.** Hermes renders a plugin's
+prompt section once per session and then replays it, so an edit made mid-chat
+would otherwise wait for the next one. Instead the turn after the edit carries
+the new text, saying that it replaces what the prompt says; emptying it is
+retracted in words, since the frozen copy cannot be taken back out. On every
+other turn this costs one `stat` of `profile.yaml` and reads nothing.
 
 On a gateway with authentication in front of it the plugin works out **which**
 person sent a turn and picks their context. It asks three places in order: the

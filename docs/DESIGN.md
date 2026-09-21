@@ -418,9 +418,53 @@ Three limits, all real:
 2. **`sender_id` is the session's creator, not necessarily this turn's typist.**
    It is stamped when the session is created; a second person attaching to an
    existing session does not change it.
-3. **The frozen section does not notice an edit.** A person who changes their
-   profile reaches a long-running Bot Chat on its next session. The per-turn
-   path is current, the frozen one is as of session start.
+3. **The frozen section is as of session start, so the per-turn path carries
+   the change.** Core renders a plugin's section once and replays the bytes it
+   persisted; only a rebuild boundary — a new session, or compaction calling
+   `invalidate_system_prompt` — makes it render again, and a plugin cannot ask
+   for one. See "An edit made while a chat is open" below for what happens
+   instead.
+
+### An edit made while a chat is open
+
+Somebody opens Settings → Context, corrects their timezone, and goes back to
+the chat they were already in. The system prompt still says the old one, and
+will until that chat is rebuilt — which on a long-running Bot Chat may be
+never. "Resolve per turn" has to mean the *content* as well as the person, or
+the app is left telling people their change takes effect in a new chat.
+
+So `pre_llm_call` also asks, every turn, whether what it froze still holds:
+
+| | |
+|---|---|
+| `profile.yaml` has not moved | nothing; the turn costs one `stat` |
+| it moved, this section reads the same | nothing, and the new stamp is remembered so the parse happens once |
+| it moved and now says something else | the new text rides the user message, saying it replaces the frozen copy |
+| it moved and now says nothing | a line saying the background was removed and should be disregarded |
+
+The gate is a `stat` of `profile.yaml` — `(mtime_ns, size)`, taken *before* the
+read so an edit landing between the two is noticed rather than swallowed. The
+app writes that file constantly, for push registrations and `seen` heartbeats,
+so a moved stamp is only ever a reason to go and look; the decision is made by
+comparing the rendered text against what was frozen. Two writes inside one
+filesystem timestamp tick collide, which costs a missed look and not a wrong
+answer: the next write moves the stamp again.
+
+Both copies are in the prompt at that point, because the frozen one cannot be
+withdrawn. That is why the newer one says out loud that it wins — a model
+handed two descriptions of one person and no ordering will average them. The
+same reasoning is why a *cleared* context is retracted in words rather than
+left standing: somebody who deletes what they wrote about themselves has
+usually deleted it on purpose, and silence would leave it in the prompt for the
+rest of the session.
+
+What is remembered per session is the resolved user, the frozen text and that
+stamp, capped at 512 sessions. A gateway that is up for months sees an
+unbounded number of session ids, and evicting the least recently frozen costs a
+redundant injection on a chat nobody has touched since.
+
+The capability is `context.live`. Without it the app has to say "this takes
+effect in your next chat", which is a sentence no app should have to write.
 
 ### Resolution order
 

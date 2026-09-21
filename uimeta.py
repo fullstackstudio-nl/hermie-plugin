@@ -104,6 +104,27 @@ def is_app_key(key: str) -> bool:
     return user_of_app_key(key) is not None
 
 
+def profile_stamp(home: Optional[Path] = None) -> Tuple[int, int]:
+    """A cheap "has ``profile.yaml`` moved?" reading: ``(mtime_ns, size)``.
+
+    One ``stat`` call. It exists so a caller on the agent's own path can ask
+    whether anything the app wrote could have changed without parsing YAML for
+    an answer that is almost always "no". A missing or unreadable file is
+    ``(0, 0)``, which differs from every real file and so reads as a change
+    exactly once — the recoverable direction.
+
+    It is a *change* detector, never an equality proof: two writes inside one
+    filesystem timestamp tick collide. Every caller here treats a moved stamp
+    as "go and look", so a collision costs a missed look rather than a wrong
+    answer, and the next write moves it again.
+    """
+    try:
+        info = profile_path(home).stat()
+    except Exception:
+        return (0, 0)
+    return (int(getattr(info, "st_mtime_ns", 0)), int(info.st_size))
+
+
 def read_meta(home: Optional[Path] = None) -> Dict[str, Any]:
     """The whole ``ui_meta`` map, or ``{}`` when the profile cannot be read."""
     try:

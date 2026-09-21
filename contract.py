@@ -97,6 +97,11 @@ CAP_PUSH_SEEN_PER_CHAT = "push.seen.per_chat"
 CAP_UIMETA_PER_USER = "ui_meta.per_user"
 CAP_CONTEXT_PROMPT = "context.system_prompt"
 CAP_CONTEXT_PER_BOT = "context.per_bot"
+# An edit made while a chat is open reaches that chat on its very next turn.
+# Core freezes a plugin's prompt section for the life of a session, so without
+# this the app has to tell somebody their change takes effect in a new chat --
+# which is a sentence no app should have to write, and the wrong answer besides.
+CAP_CONTEXT_LIVE = "context.live"
 CAP_COMMAND_ME = "command.me"
 
 # Modules that exist as a name and a config key but have no implementation yet.
