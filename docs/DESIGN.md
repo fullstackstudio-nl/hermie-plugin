@@ -423,9 +423,9 @@ shim rather than a policy:
    person's own entry, so a sender the app has never seen gets an id and no
    name rather than somebody else's.
 3. **It is written where Hermes keeps it, not in the environment.** The write
-   goes to the same `ContextVar` `get_session_env` reads. A process-wide
-   `os.environ` write would outlive the turn and reach every other session in
-   the gateway, which is the bug the `ContextVar`s replaced.
+   goes to the same `ContextVar` `get_session_env` reads. Setting a process-wide
+   environment variable instead would outlive the turn and reach every other
+   session in the gateway, which is the bug the `ContextVar`s replaced.
 
 **And one limit, which is the whole size of the feature.** `pre_llm_call` is one
 of the hooks Hermes runs under `plugins.hook_callback_timeout` (30s by default),

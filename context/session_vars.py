@@ -15,7 +15,7 @@ that gap:
   becomes a no-op the day Hermes fills them in on this path;
 - it writes each variable only when that variable is empty;
 - it writes them the way Hermes does, through the same `ContextVar`s, rather
-  than through `os.environ` — a process-wide environment write would outlive
+  than through the process environment — a process-wide environment write would outlive
   the turn and reach every other session in the gateway.
 
 **What this cannot do, written down because it is the whole limit of the
