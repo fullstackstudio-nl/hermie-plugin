@@ -86,12 +86,37 @@ value to a queue.
 - **`ctx.spawn_task(coro)`** — a supervised asyncio task, cancelled on unload.
   It needs a running loop, so it is not usable from a synchronous hook; the
   sender here is a plain daemon thread instead.
-- **HTTP routes** — possible, but not over the gateway's own port. A plugin
-  shipping `dashboard/manifest.json` with an `"api"` key gets a FastAPI router
-  mounted at `/api/plugins/<name>/` on the **dashboard** web server. That is a
-  second address, which is the thing ADR-0017 refused, so the plugin does not
-  use it. The capability advert goes in `ui_meta` instead, where the app is
-  already looking.
+- **HTTP routes** — possible, on the dashboard web server, and not used. A
+  plugin shipping `dashboard/manifest.json` with an `"api"` key gets its
+  module-level FastAPI `router` mounted at `/api/plugins/<name>/`
+  (`hermes_cli/web_server_dashboard.py::_mount_plugin_api_routes`, called once at
+  import from `hermes_cli/web_server.py`). `register(ctx)` has nothing to do with
+  it: there is no `register_route` on the plugin context, and the two mechanisms
+  are disjoint. Three properties of that surface, checked against 0.21.3, are why
+  the advert lives in `ui_meta` instead:
+
+  - **Auth is binary and anonymous.** There are no per-route dependencies —
+    no `Depends(...)` anywhere in `hermes_cli/` — only middleware, which either
+    401s the request or lets it through. The loopback credential is a
+    process-ephemeral shared token (`X-Hermes-Session-Token`), not a person. On a
+    gated deployment a handler *can* read `request.state.session`, but there is
+    no role, no admin flag and no ownership model, so **any authenticated caller
+    can reach any route**. A route cannot refuse a user; there is nothing to
+    refuse them by.
+  - **There is no profile scoping.** A plugin handler runs under the dashboard
+    process's `HERMES_HOME` whatever profile the caller meant. Core's own routes
+    opt in by declaring a `profile` parameter and wrapping the body in
+    `web_server_profiles._config_profile_scope`, which is private; the shipped
+    plugins do not, and the kanban plugin carries a comment saying the mismatch
+    is a known hazard. A multiplexed gateway therefore needs a plugin to
+    reimplement core's scoping against core's private helpers.
+  - **It is a second address.** Which is what ADR-0017 refused, and it is still
+    the smaller point next to the first two.
+
+  So anything the app needs goes through `ui_meta`, over the connection it
+  already has. A feature that genuinely cannot — one that must refuse a caller,
+  or act on a named profile — is blocked on Hermes gaining an authorization
+  model, not on this plugin writing a route.
 - **No identity, anywhere in the plugin API.** No hook kwarg, no prompt-section
   field and no context object names the person a dashboard session was admitted
   for, even though the gateway stamped it on the session record. §4 explains
