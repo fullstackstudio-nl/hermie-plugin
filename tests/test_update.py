@@ -19,7 +19,7 @@ import hermie_plugin
 from hermie_plugin import contract, uimeta, update
 from hermie_plugin.state import MIGRATIONS, STATE_VERSION, State, migrate
 
-from test_plugin import FakeCtx, app_meta_with, gateway  # noqa: F401
+from test_plugin import app_meta_with, gateway  # noqa: F401
 
 
 class FakeStore:
