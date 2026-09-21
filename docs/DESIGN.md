@@ -114,9 +114,12 @@ value to a queue.
     the smaller point next to the first two.
 
   So anything the app needs goes through `ui_meta`, over the connection it
-  already has. A feature that genuinely cannot — one that must refuse a caller,
-  or act on a named profile — is blocked on Hermes gaining an authorization
-  model, not on this plugin writing a route.
+  already has — **except the memory browser**, which cannot: it is a
+  request/response surface over far more data than a profile file should carry,
+  and the WebSocket has no memory method to borrow (`profiles.remember_onboarding`
+  writes USER.md on the default profile with a fixed key set, and `/memory` over
+  `slash.exec` is the write-approval queue, not a reader). §9 is what that costs
+  and what holds it in.
 - **No identity, anywhere in the plugin API.** No hook kwarg, no prompt-section
   field and no context object names the person a dashboard session was admitted
   for, even though the gateway stamped it on the session record. §4 explains
@@ -765,6 +768,140 @@ holds, and it is one it minted itself.
 
 ---
 
+## 8. Setting a profile's display name — Hermes already does it
+
+Written down here because the obvious place to put it would have been a route on
+this plugin, and that route would have been a second, worse door to something
+core already serves. Read out of Hermes 0.21.3 so an app can call it without
+re-deriving any of it.
+
+**The route is `PATCH /api/profiles/{name}`**, on the dashboard server, behind
+the same auth as everything else there. Not `POST …/rename`.
+
+```
+PATCH /api/profiles/default
+{"new_name": "Jurist"}
+```
+
+`new_name` is the only body key (`ProfileRename` in `hermes_cli/web_models.py`).
+
+**The `default` profile is the case that matters**, because a Hermie bot usually
+is one. Its home *is* the installation root, so it cannot be renamed; Hermes
+turns the call into a presentation-only display name and says so in the answer,
+keeping the canonical id:
+
+```json
+{"ok": true, "name": "default", "display_name": "Jurist", "path": "/…/.hermes"}
+```
+
+Any other profile is really renamed — directory, wrapper script, service,
+active-profile pointer — and answers without `display_name`:
+
+```json
+{"ok": true, "name": "jurist", "path": "/…/.hermes/profiles/jurist"}
+```
+
+| Status | When |
+|---|---|
+| 400 | `ValueError` or `FileExistsError` — a name over 64 characters, an invalid or reserved id, an empty new name for `default`, a target that already exists |
+| 404 | `FileNotFoundError` — no such profile |
+| 500 | anything else |
+
+What the setter validates is **only** `.strip()` and a 64-character maximum
+(`hermes_cli/profiles.py::set_profile_display_name`). No character set, no
+uniqueness: two profiles may carry the same display name, and one may equal
+another's canonical id. Passing `""` clears it — the key is removed from
+`profile.yaml` and the label falls back to the id — but `rename_profile` refuses
+an empty new name for `default` before the setter sees it, so clearing that one
+is not reachable over this route.
+
+**Reading it back** is `profiles.list` over the WebSocket the app already holds:
+the roster row carries `display_name`. `bot_title` is not a row field — it is
+`ui_meta["hermes-bots"]["title"]`, which the same row carries under `ui_meta`
+and which `profiles.configure` can write with the per-key compare-and-swap.
+
+**There is no WebSocket method that sets a display name or renames a profile.**
+`groups.rename` renames a room, `pet.rename` a mascot, `session.title` a
+session, and `/rename` is a stub pointing at `/title`. So this one call goes
+over HTTP while the rest of the app's profile work stays on the socket.
+
+---
+
+## 9. The memory browser
+
+The one part of this plugin that answers HTTP. It mounts the way §1 describes —
+`dashboard/manifest.json` naming `plugin_api.py`, whose module-level `router`
+core mounts at `/api/plugins/hermie/` — and it is the exception to the rule in
+§1 rather than a change of mind about it. The alternatives were weighed and
+none of them works: `ui_meta` is a profile file that every client reads on every
+roster paint, and the gateway's WebSocket has no memory method to borrow.
+
+### Who may call it
+
+**Whoever is signed in to the dashboard, and that is the whole of it.** Hermes
+authenticates a dashboard request with process-wide middleware and then hands
+every authenticated caller every route — core's `/api/memory/reset` included —
+with no role, owner or permission for a route to check. So these routes treat a
+signed-in caller as an operator of the machine. There is no per-user
+authorization here because there is nothing to build one from, and a check that
+could only re-read the same shared token the middleware already checked would be
+a lie in the shape of a safeguard. The README says so where somebody deciding
+whether to share a gateway will read it.
+
+Two things the plugin *can* get wrong, and both are held by a test: a path that
+landed outside `/api/plugins/hermie/` would be a route nothing gates, and a
+WebSocket would not be gated at all, because HTTP middleware does not see an
+upgrade. There is no socket here. A third test asserts the prefix is absent from
+core's own public-path allowlist, so the gate demonstrably covers us.
+
+### Which profile
+
+**`profile` is required on every route.** A plugin handler is handed none and
+otherwise runs under whichever home the dashboard process started with, which on
+a multiplexed gateway is somebody else's memory. The name is rejected before it
+reaches any Hermes function if it carries a separator, a parent reference, a
+null or surrounding space — not sanitised, rejected, because a profile is an
+identifier the gateway already knows rather than a path to be cleaned — and then
+checked for membership in the gateway's own list.
+
+Scoping itself is `hermes_constants.set_hermes_home_override`, which is public,
+context-local, and deliberately does not touch `os.environ` (a process-wide
+write would reach every other thread in the gateway). Set and reset happen on
+the one thread that does the work, in a `finally`, so a failed request cannot
+leave another profile's home bound. Under it, `MemoryStore._path_for` resolves
+inside that profile and the lock it takes is that profile's `MEMORY.md.lock`.
+
+### What it will and will not do
+
+- **Two targets, `memory` and `user`.** The store dispatches on a bare
+  `target == "user"` and the tool layer refuses anything else; a third would be
+  our invention.
+- **Every write is `MemoryStore.add` / `replace` / `remove`**, so the file lock,
+  the external-drift backup and the char limits are Hermes' own, and the
+  response is the store's own result dict rather than a translation of it.
+- **An entry is named by its text.** A memory file has no ids — entries are
+  `"\n§\n"`-joined text — so a listing mints positional ones, and a position is
+  only a way to look an entry up. The text is what goes to the store, which
+  matches on text itself, so an index that went stale between a read and a write
+  cannot delete the entry that moved into its place. A stale index is an error.
+- **A graph pages over entries, not over nodes.** A page that filled its node
+  cap would silently drop entries and an app paging through would never learn
+  it had missed one. The node and edge caps are a last defence; `truncated`
+  says when one bit. Topics are cheap by design — capitalised phrases that are
+  not sentence openers, `@handles`, `#hashtags`, ISO dates — and a topic that is
+  nonsense is a node nobody clicks rather than a wrong answer.
+- **An external provider is listed and never enumerated.** `MemoryProvider` has
+  `prefetch(query)` returning opaque formatted text and no call that returns
+  entries; mem0's own surface is `search(query, top_k)` with no `get_all`. So
+  every external row carries `enumerable: false`. That is the gap, and naming
+  the provider while saying it cannot be opened is the honest version of it.
+- **Both halves switch off per profile**, through that profile's own config —
+  which is the right scope, since the operator of a profile decides whether its
+  memory can be opened. `memory.edit` without `memory.browse` is not a state:
+  an app that cannot list an entry cannot name one to replace.
+
+---
+
 ## 7. Threat model
 
 Unchanged from ADR-0017, with three differences, all of them reductions.
@@ -788,6 +925,11 @@ Unchanged from ADR-0017, with three differences, all of them reductions.
   here there is no such credential at all.
 - *Traffic analysis.* Apple, Google and any browser push service learn that a
   device received a notification, when, and from which server.
+- *The memory browser trusts the dashboard's own auth.* Any signed-in caller can
+  read and edit any profile's memory. That is inherited, not invented: Hermes
+  gives a route no identity to check and core's own routes already work this
+  way. It is a reduction only in that `memory.browse` turns it off, which is a
+  switch core's `/api/memory` does not have. §9.
 - *`ui_meta` is per profile, not per user.* The app's key is per person now
   (`hermie-app:<user id>`), but `ui_meta` itself is not: every key on the
   profile is handed to every client that can read the profile, so two people on

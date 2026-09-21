@@ -68,7 +68,7 @@ import time
 from typing import Any, Dict, Iterable, List
 
 # The plugin's own release version. Also in plugin.yaml; a test keeps them equal.
-PLUGIN_VERSION = "0.4.0"
+PLUGIN_VERSION = "0.5.0"
 
 # Where an update comes from, named here so the advert and the update check
 # cannot disagree about which repository this plugin is.
@@ -129,6 +129,13 @@ CAP_CONTEXT_PER_BOT = "context.per_bot"
 # which is a sentence no app should have to write, and the wrong answer besides.
 CAP_CONTEXT_LIVE = "context.live"
 CAP_COMMAND_ME = "command.me"
+# The memory browser. These are the only capabilities naming an HTTP surface
+# rather than something reachable over the connection the app already has, and
+# they say so: the routes are mounted by the dashboard, on the dashboard's port,
+# under the dashboard's own all-or-nothing auth. An app that sees them still has
+# to know the dashboard address and hold a dashboard credential.
+CAP_MEMORY_BROWSE = "memory.browse"
+CAP_MEMORY_EDIT = "memory.edit"
 # The gateway was asked to find out whether a newer plugin exists, and the
 # advert carries the answer. Advertised only when the operator switched the
 # check on: the string says an answer is there, not that one could be.
@@ -138,6 +145,9 @@ CAP_UPDATE_CHECK = "plugin.update_check"
 # They are advertised as "planned" rather than silently missing so the app can
 # tell "this plugin is too old" from "this gateway has it switched off", and so
 # the config surface does not change shape when they land.
+# `search` stays planned and is NOT what the memory module's `search` route is:
+# that one greps a profile's two memory files, this one is the transcript index
+# with row ids. Removing it here would have quietly retired a different feature.
 PLANNED_MODULES = ("sessions", "presence", "transcripts", "search", "attachments", "usage")
 
 

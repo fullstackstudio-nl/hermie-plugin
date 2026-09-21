@@ -28,7 +28,7 @@ __version__ = contract.PLUGIN_VERSION
 
 # Modules that ship. `push` and `context` are on unless told otherwise; the rest
 # are named in contract.PLANNED_MODULES and load nothing.
-IMPLEMENTED = ("push", "context")
+IMPLEMENTED = ("push", "context", "memory")
 
 
 class Runtime:
@@ -195,6 +195,11 @@ def register(ctx: Any) -> None:
         from . import context as context_module
 
         capabilities.extend(context_module.register(ctx, runtime).capabilities())
+
+    if states.get("memory") == "on":
+        from . import memory as memory_module
+
+        capabilities.extend(memory_module.register(ctx, runtime).capabilities())
 
     installed_ref, latest = update_fields(runtime)
     if latest:

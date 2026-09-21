@@ -5,7 +5,7 @@
 # `hermie-plugin`. Changing it renames both, so it does not change.
 name: hermie
 manifest_version: 1
-version: 0.4.0
+version: 0.5.0
 description: >-
   Hermie's gateway-side companion: push notifications for bot messages, approval
   and clarify requests, and cron deliveries, plus per-device context injected
@@ -52,6 +52,22 @@ config_schema:
     type: bool
     default: true
     description: "Inject per-device context into a bot's system prompt."
+  modules.memory:
+    type: bool
+    default: true
+    description: "Serve the memory browser routes on the dashboard."
+  memory.browse:
+    type: bool
+    default: true
+    description: >-
+      Let a signed-in dashboard caller read this profile's MEMORY.md and
+      USER.md through /api/plugins/hermie/memory/.
+  memory.edit:
+    type: bool
+    default: true
+    description: >-
+      Let that caller add, replace and remove entries as well. Has no effect
+      while memory.browse is off.
   push.types:
     type: list
     default: ["message", "request", "cron", "cron_done", "cron_failed", "turn_done", "turn_failed"]

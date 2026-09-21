@@ -65,6 +65,8 @@ that cannot work is worse than one that is absent.
 | `context.live` | a context edit reaches an **open** chat on its next turn |
 | `command.me` | `/me` was accepted by this gateway |
 | `plugin.update_check` | the advert carries the newest release tag |
+| `memory.browse` | a profile's memory can be read over the dashboard's plugin routes |
+| `memory.edit` | and written |
 
 An absent list means an absent plugin. A plugin too old to publish one, a
 plugin that is installed but disabled, and no plugin at all are
@@ -112,6 +114,9 @@ plugins:
           # Web Push only. The key is created on first use if this is empty.
           vapid_key_path: ""
           vapid_contact: "mailto:you@example.com"
+        memory:
+          browse: true
+          edit: true
         update:
           # Ask this repository, at most once an hour, whether a newer release
           # exists, and put the answer in the advert. Off by default; the advert
@@ -187,7 +192,14 @@ From:       hermie-app:ef11a9, updated 2026-09-21 02:19 UTC
 When it says `nobody` it also says why, and what to do about it: accept the
 sharing notice in Hermie's Settings → Context, then send a message.
 
-> **On a shared gateway, read this.** The app keeps one metadata key per person,
+> **On a shared gateway, read this.** Anyone signed in to the dashboard can read
+> and edit any profile's memory through the routes below. That is the dashboard's
+> trust model, not a decision of this plugin's: Hermes authenticates a dashboard
+> request and then hands every authenticated caller every route, core's own
+> included, with no role, owner or permission anywhere for a route to check. Turn
+> `memory.browse` off on a gateway where that is not what you want.
+>
+> The app keeps one metadata key per person,
 > but Hermes' profile metadata is per profile: every key on it is handed to every
 > client that can read the profile, so everyone with access to the gateway can
 > see everyone else's context section and push registrations. A push token is only an address; a
@@ -247,6 +259,54 @@ The repo root is the plugin package — Hermes imports the directory — so `tes
 builds the same package rather than inventing an import path production never
 uses, and the run is rooted below the root's `__init__.py`.
 
+## Memory
+
+The app can browse and edit a profile's `MEMORY.md` and `USER.md`. This is the
+one part of the plugin that answers HTTP: a memory store is a request/response
+surface over more data than a profile file should carry, so it mounts on the
+dashboard's own plugin router rather than going through `ui_meta` like
+everything else.
+
+| | |
+|---|---|
+| `GET /api/plugins/hermie/memory/list?profile=` | entries per target, each with an id, its length and its topics, plus the char usage and limit |
+| `GET /api/plugins/hermie/memory/search?profile=&q=` | every entry matching all of the query's words, across both targets |
+| `GET /api/plugins/hermie/memory/graph?profile=&offset=&limit=` | nodes and edges to draw: entries, the profile, topics; `offset`/`limit` page over entries |
+| `POST /api/plugins/hermie/memory/edit` | `{profile, target, op: add\|replace\|remove, content, old_text \| index}` |
+
+Four things worth knowing before you call them.
+
+- **They are on the dashboard's port, behind the dashboard's auth.** Not on the
+  gateway's WebSocket, where the rest of this plugin lives. A caller needs the
+  dashboard address and a dashboard credential; an unauthenticated request gets
+  a 401 from Hermes before any of this runs.
+- **`profile` is required, always.** A plugin route is handed no profile and
+  would otherwise act on whichever one the dashboard process started under. The
+  name is checked against the gateway's real profile list and anything carrying
+  a separator or a parent reference is refused outright.
+- **Every write goes through Hermes' own `MemoryStore`**, so its file lock, its
+  external-drift check and its char limits all apply, and the answer is the
+  store's own result. An entry is named by its text; an `index` is only a way of
+  looking one up, and an index that has gone stale is an error rather than a
+  guess at whatever moved into its place.
+- **There are exactly two targets**, `memory` and `user`. An external provider
+  (mem0 and the rest) is listed with `enumerable: false` and cannot be opened:
+  the provider interface offers a query-shaped `prefetch` and has no call that
+  returns entries, so there is nothing to show without inventing an API Hermes
+  does not have.
+
+Switch either half off per profile:
+
+```yaml
+plugins:
+  entries:
+    hermie:
+      settings:
+        memory:
+          browse: true   # false: the routes refuse with 403
+          edit: false    # read-only; browsing still works
+```
+
 ## Updating
 
 ```
@@ -276,6 +336,9 @@ plugins:
   entries:
     hermie:
       settings:
+        memory:
+          browse: true
+          edit: true
         update:
           check: true
 ```

@@ -8,6 +8,20 @@ people.
 
 ### Added
 
+- `memory.browse` and `memory.edit` — a memory browser for a profile's
+  `MEMORY.md` and `USER.md`, served at `/api/plugins/hermie/memory/`
+  (`list`, `search`, `graph`, `edit`). This is the plugin's first HTTP surface
+  and the exception to the rule in DESIGN.md §1: `ui_meta` cannot carry it and
+  the gateway's WebSocket has no memory method to borrow. It runs behind the
+  dashboard's own authentication, which is all-or-nothing — any signed-in caller
+  is treated as an operator, as on every core route — and the README says so in
+  the shared-gateway warning. `profile` is required and validated against the
+  gateway's real profile list; the store is opened under that profile's home
+  through the public `set_hermes_home_override`, so Hermes' own file lock, drift
+  check and char limits apply. External providers are listed with
+  `enumerable: false`, because the provider interface has no call that returns
+  entries.
+
 - `plugin.update_check`, and an advert that says which build is installed —
   `version`, `maxContract`, `minAppVersion`, and a `source` naming the
   repository and the commit the installed tree sits at (read from `.git`, no
@@ -17,6 +31,12 @@ people.
   hour across restarts, nothing identifying sent — and is off by default.
 
 ### Changed
+
+- The docs now carry the exact shape of Hermes' own `PATCH /api/profiles/{name}`
+  (DESIGN.md §8), which is how a display name is set. The plugin does not
+  duplicate it: any authenticated dashboard caller can already reach core's
+  route, and a plugin route could not have applied the per-user check that would
+  have justified a second one.
 
 - State is version 2, adding the update-check cache. `sent` and `retired` come
   through a migration unchanged; a state file from an unknown future version is
