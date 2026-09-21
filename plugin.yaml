@@ -81,6 +81,12 @@ config_schema:
     type: int
     default: 1200
     description: "Hard cap on the rendered device-context section."
+  context.session_vars:
+    type: bool
+    default: true
+    description: >-
+      Fill in Hermes' own HERMES_SESSION_USER_ID, _ID_ALT and _NAME for a turn
+      when they are empty and the plugin can say who is asking.
   context.default_user:
     type: str
     default: ""

@@ -7,6 +7,7 @@ in a `context` section. There is one key per person now — `hermie-app:<user id
     {"context": {"v": 1,
                  "default": "<user id>",
                  "users": {"<user id>": {"displayName": "...",
+                                         "userIdAlt": "...",
                                          "about": "...",
                                          "device": {"model": "...", "os": "...", "appVersion": "..."},
                                          "timezone": "Europe/Amsterdam",
@@ -34,6 +35,7 @@ SECTION_VERSION = 1
 # crowd out the short ones that identify the person.
 LIMITS = {
     "displayName": 80,
+    "userIdAlt": 128,
     "about": 600,
     "model": 60,
     "os": 40,
@@ -48,6 +50,9 @@ LIMITS = {
 class UserContext:
     user_id: str
     display_name: str = ""
+    # A second id the same person is known by, when the app knows one. Only
+    # used to fill in Hermes' `HERMES_SESSION_USER_ID_ALT`; never rendered.
+    user_id_alt: str = ""
     about: str = ""
     device_model: str = ""
     device_os: str = ""
@@ -80,6 +85,7 @@ def user_of(user_id: str, value: Any) -> Optional[UserContext]:
     return UserContext(
         user_id=user_id,
         display_name=_text(value.get("displayName"), LIMITS["displayName"]),
+        user_id_alt=_text(value.get("userIdAlt"), LIMITS["userIdAlt"]),
         about=_text(value.get("about"), LIMITS["about"]),
         device_model=_text(device.get("model"), LIMITS["model"]),
         device_os=_text(device.get("os"), LIMITS["os"]),

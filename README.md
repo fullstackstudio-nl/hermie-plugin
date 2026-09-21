@@ -83,6 +83,14 @@ plugins:
           # Whose context to use when the gateway cannot say who is asking.
           # Empty is fine when only one person is registered.
           default_user: ""
+
+          # Fill in Hermes' own HERMES_SESSION_USER_ID, _ID_ALT and _NAME for a
+          # turn when they are empty and the plugin knows who is asking, so a
+          # tool that reads them sees the person rather than nobody. Never
+          # overwrites a value the gateway set. Hermes runs this hook on a
+          # worker thread unless plugins.hook_callback_timeout is 0, and a
+          # session variable set there does not reach the turn — see DESIGN.md.
+          session_vars: true
 ```
 
 Check what the plugin thinks it can do:

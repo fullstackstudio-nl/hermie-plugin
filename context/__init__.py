@@ -25,16 +25,23 @@ an ungated gateway has no `auth_user_id` at all, so `sender_id` is empty and
 only the default applies; and a section frozen at session start does not change
 when the person edits their profile, so an edit reaches a long-running Bot Chat
 on its next session.
+
+`pre_llm_call` does one more thing, in `session_vars.py`: when Hermes' own
+`HERMES_SESSION_USER_*` variables are empty and this module can say who is
+asking, it fills them in for the call, so a tool that reads them sees the person
+rather than nobody. It is off with `context.session_vars: false` and it is a
+no-op on any gateway that already fills them.
 """
 
 from __future__ import annotations
 
 import logging
 import threading
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Callable, Dict, List, Mapping, Optional
 
 from .. import contract
 from .render import ContextSection, read_sections, render, resolve
+from .session_vars import USER_ID, USER_ID_ALT, USER_NAME, SessionVars
 
 logger = logging.getLogger(__name__)
 
@@ -44,8 +51,9 @@ SECTION_ID = "hermie.device"
 
 
 class ContextModule:
-    def __init__(self, runtime):
+    def __init__(self, runtime, session_vars: Optional[SessionVars] = None):
         self.runtime = runtime
+        self.session_vars = session_vars if session_vars is not None else SessionVars()
         # session id -> the user id whose context the frozen section describes.
         # Used to answer "is this sender the one the section already covers?".
         self.frozen_for: Dict[str, str] = {}
@@ -54,6 +62,10 @@ class ContextModule:
     @property
     def max_chars(self) -> int:
         return int(self.runtime.config("context.max_chars", 1200) or 1200)
+
+    @property
+    def fills_session_vars(self) -> bool:
+        return self.runtime.config("context.session_vars", True) is not False
 
     @property
     def configured_default(self) -> str:
@@ -86,12 +98,55 @@ class ContextModule:
             logger.warning("hermie: could not render the device context: %s", exc)
             return ""
 
+    # -- telling Hermes who is asking ----------------------------------------
+
+    def fill_session_vars(self, sender_id: str, section_of: Callable[[], ContextSection]) -> Dict[str, str]:
+        """Fill in `HERMES_SESSION_USER_*` for this call when they are empty.
+
+        Whose turn it is comes from the same order the rest of the module uses:
+        the sender the gateway named, then the resolved default. A gateway that
+        already knows is left alone — this is a shim over a gap, and it goes
+        quiet the day the gap closes. See `session_vars.py` for what the write
+        can and cannot reach.
+
+        `section_of` is a callable rather than a section because every gate
+        above it is free and reading the section is a file read on the agent's
+        own path. On a gateway that already names its user, this costs one
+        `ContextVar` lookup a turn and touches no disk.
+        """
+        if not self.fills_session_vars or not self.session_vars.available():
+            return {}
+        if self.session_vars.read(USER_ID):
+            return {}
+        section = section_of()
+        user = resolve(section, sender_id=sender_id, configured_default=self.configured_default)
+        user_id = sender_id or (user.user_id if user is not None else "")
+        if not user_id:
+            return {}
+        named = user if user is not None and user.user_id == user_id else None
+        return self.session_vars.fill({
+            USER_ID: user_id,
+            USER_ID_ALT: named.user_id_alt if named is not None else "",
+            USER_NAME: named.display_name if named is not None else "",
+        })
+
     # -- the per-turn top-up -------------------------------------------------
 
     def on_pre_llm_call(self, **kwargs: Any) -> Optional[Dict[str, str]]:
         """Contribute context only for a sender the frozen section does not cover."""
         try:
             sender_id = str(kwargs.get("sender_id") or "")
+            # One read of the app's metadata per turn at most, shared by the
+            # shim and the top-up, and skipped entirely when neither needs it.
+            cache: List[ContextSection] = []
+
+            def section_of() -> ContextSection:
+                if not cache:
+                    cache.append(self.section())
+                return cache[0]
+
+            self.fill_session_vars(sender_id, section_of)
+
             if not sender_id:
                 # An ungated gateway names nobody. The frozen section is all
                 # there is, and it is already in the prompt.
@@ -102,7 +157,7 @@ class ContextModule:
             if already and already == sender_id:
                 return None
 
-            section = self.section()
+            section = section_of()
             user = resolve(section, sender_id=sender_id, configured_default=self.configured_default)
             if user is None or user.user_id == already:
                 return None

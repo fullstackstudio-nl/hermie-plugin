@@ -84,6 +84,12 @@ value to a queue.
   second address, which is the thing ADR-0017 refused, so the plugin does not
   use it. The capability advert goes in `ui_meta` instead, where the app is
   already looking.
+- **`gateway.session_context`** — the session variables tools read: `ContextVar`s
+  named after the old `HERMES_SESSION_*` environment variables, read through
+  `get_session_env(name)` (the variable if it was ever bound here, else the real
+  environment). `set_session_vars(...)` binds them all at once and
+  `clear_session_vars` blanks them; there is no public setter for one variable,
+  so writing one means the `_VAR_MAP` entry `get_session_env` itself reads.
 - **`ui_meta` is not part of the plugin API.** It lives in `profile.yaml`, as
   `ui_meta: {key: value}` beside `_ui_meta_revisions: {key: int}` (the gateway's
   per-key compare-and-swap). A plugin reaches it by reading that file.
@@ -365,6 +371,41 @@ own `default` → the only registered person, if there is exactly one. With seve
 registered people and no way to tell who is asking, **nothing is injected**:
 showing a bot the wrong person's notes is worse than showing it none.
 
+### Telling Hermes who is asking
+
+Hermes carries the identity of a turn in session variables, and tools read them:
+a cron job's `user_id`, a kanban card's author, a background watcher's owner. On
+the paths Hermie uses they are sometimes empty while the plugin *does* know who
+is asking — `pre_llm_call` is handed `sender_id`, and the app's metadata names
+the registered person.
+
+So `pre_llm_call` fills in `HERMES_SESSION_USER_ID`, `_ID_ALT` and `_NAME` for
+that call, under `context.session_vars` (on by default). Three rules keep it a
+shim rather than a policy:
+
+1. **Nothing is overwritten.** If `HERMES_SESSION_USER_ID` already holds a
+   value, the shim writes nothing at all; each of the three is written only
+   when it is itself empty. The day Hermes fills them on this path, this
+   becomes a no-op that nobody has to come back and remove.
+2. **The id may be the gateway's, the name may not be.** `sender_id` is a fact
+   and is used as-is. The display name and the alternative id come from that
+   person's own entry, so a sender the app has never seen gets an id and no
+   name rather than somebody else's.
+3. **It is written where Hermes keeps it, not in the environment.** The write
+   goes to the same `ContextVar` `get_session_env` reads. A process-wide
+   `os.environ` write would outlive the turn and reach every other session in
+   the gateway, which is the bug the `ContextVar`s replaced.
+
+**And one limit, which is the whole size of the feature.** `pre_llm_call` is one
+of the hooks Hermes runs under `plugins.hook_callback_timeout` (30s by default),
+and a bounded callback runs on a worker thread through
+`contextvars.copy_context().run(...)`. A variable set inside a copied context is
+discarded with that context, so under the default timeout the write never
+reaches the turn. With `plugins.hook_callback_timeout: 0` the callback runs on
+the caller's own thread and the write lands where the rest of the turn reads it.
+The shim is built to be harmless either way — every gate above it is free, and
+the metadata read happens only once the variables are known to be empty.
+
 ### Bounding
 
 Per-field caps first (display name 80, about 600, per-bot note 400), then a
@@ -398,6 +439,7 @@ plugins:
         context:
           max_chars: 1200
           default_user: ""
+          session_vars: true       # fill HERMES_SESSION_USER_* when they are empty
 ```
 
 ## 6. State
