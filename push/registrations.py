@@ -32,13 +32,6 @@ SECTION_VERSION = 1
 # turns nothing on.
 PUSH_TYPES = ("message", "request", "cron", "turn_done", "turn_failed")
 
-# What a person silenced, per bot, as the app writes it:
-#
-#     mutes: {"<bot>": <until>}
-#
-# `until` is a unix second and `0` means forever. It sits at the top of the
-# person's bag, beside `push` and `context`, because it is a fact about a person
-# and a bot rather than about a transport.
 
 
 @dataclass(frozen=True)
@@ -160,7 +153,9 @@ def _mutes(value: Any) -> Dict[str, int]:
 
 
 def mutes_of(app_key_value: Any) -> Dict[str, int]:
-    """The `mutes` map out of one app-owned bag.
+    """The `mutes` map out of one app-owned bag, as the app writes it:
+
+        mutes: {"<bot>": <until>}
 
     It lives at the top of the bag, beside `push` and `context`, because a mute
     is a fact about a person and a bot rather than about a transport. A copy
@@ -224,11 +219,10 @@ def read_section(app_key_value: Any, user_id: str = "") -> Section:
     """The whole ``push`` section out of one app-owned bag."""
     if not isinstance(app_key_value, dict):
         return Section()
-    mutes = mutes_of(app_key_value)
-    empty = Section(mutes={user_id: mutes} if mutes else {})
+    mutes = {user_id: found} if (found := mutes_of(app_key_value)) else {}
     push = app_key_value.get("push")
     if not isinstance(push, dict):
-        return empty
+        return Section(mutes=mutes)
 
     rows = push.get("registrations") if isinstance(push.get("registrations"), dict) else {}
     registrations: List[Registration] = []
@@ -249,8 +243,7 @@ def read_section(app_key_value: Any, user_id: str = "") -> Section:
     for key, value in raw_seen.items():
         _remember(seen, str(key), seen_of(value))
 
-    mutes = mutes_of(app_key_value)
-    return Section(registrations=registrations, seen=seen, mutes={user_id: mutes} if mutes else {})
+    return Section(registrations=registrations, seen=seen, mutes=mutes)
 
 
 def read_sections(items: Iterable[Tuple[str, Any]]) -> Section:
