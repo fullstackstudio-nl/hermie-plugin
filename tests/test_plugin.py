@@ -378,3 +378,32 @@ def test_a_full_queue_drops_rather_than_slowing_the_turn(tmp_path, monkeypatch):
     for _ in range(push_pkg.QUEUE_SIZE + 10):
         module.offer(note)  # must never raise
     assert module.queue.full()
+
+
+
+def test_a_probe_unload_leaves_the_serving_advert_alone(tmp_path, monkeypatch):
+    """`hermes plugins doctor` registers against a probe context and unloads it
+    again. That unload must not erase the advert of the gateway that is
+    actually serving, or the app stops offering push until the next restart."""
+    home, serving = gateway(tmp_path, app_meta=app_meta_with())
+    monkeypatch.setattr(uimeta, "hermes_home", lambda: home)
+
+    stamps = iter([1_000, 2_000])
+    monkeypatch.setattr(contract.time, "time", lambda: next(stamps))
+
+    hermie_plugin.register(serving)
+    _, probe = gateway(tmp_path, app_meta=app_meta_with())
+    hermie_plugin.register(probe)
+
+    # The probe's advert is the newer one; withdrawing it is its own business.
+    for callback in probe.unloads:
+        callback()
+    assert uimeta.read_key(uimeta.PLUGIN_KEY, home) is None
+
+    # The serving process republishes; a stale unload from the earlier
+    # registration must not touch what is on disk now.
+    monkeypatch.setattr(contract.time, "time", lambda: 3_000)
+    hermie_plugin.publish(hermie_plugin.Runtime(serving), {"push": "on"}, ["push.expo"])
+    for callback in serving.unloads:
+        callback()
+    assert uimeta.read_key(uimeta.PLUGIN_KEY, home)["updatedAt"] == 3_000

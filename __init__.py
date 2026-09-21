@@ -110,23 +110,24 @@ def module_states(runtime: Runtime) -> Dict[str, str]:
     return states
 
 
-def publish(runtime: Runtime, states: Dict[str, str], capabilities: List[str]) -> None:
+def publish(runtime: Runtime, states: Dict[str, str], capabilities: List[str]) -> Optional[int]:
     """Tell the app what this gateway can do.
 
     Written under the plugin's own `hermie-plugin` key, never under `hermie-app`:
     that one belongs to the app, which holds a compare-and-swap revision for it
     and would have its next write rejected if the plugin bumped it from behind.
+
+    Returns the advert's `updatedAt` stamp, which is how the unload hook later
+    tells its own advert from one written by another process.
     """
     try:
-        uimeta.write_key(
-            uimeta.PLUGIN_KEY,
-            contract.advert(
-                modules=states,
-                capabilities=capabilities,
-                limits={"payloadBytes": 3500, "contextChars": int(runtime.config("context.max_chars", 1200) or 1200)},
-            ),
-            runtime.home,
+        value = contract.advert(
+            modules=states,
+            capabilities=capabilities,
+            limits={"payloadBytes": 3500, "contextChars": int(runtime.config("context.max_chars", 1200) or 1200)},
         )
+        uimeta.write_key(uimeta.PLUGIN_KEY, value, runtime.home)
+        return int(value["updatedAt"])
     except Exception as exc:
         logger.warning("hermie: could not publish the plugin advert: %s", exc)
 
@@ -147,12 +148,23 @@ def register(ctx: Any) -> None:
 
         capabilities.extend(context_module.register(ctx, runtime).capabilities())
 
-    publish(runtime, states, capabilities)
+    stamp = publish(runtime, states, capabilities)
 
     # An advert that outlives the plugin is a lie the app would act on, so the
     # key is removed on unload. A gateway that is killed rather than unloaded
     # leaves it behind; the `updatedAt` stamp is how the app notices.
-    ctx.on_unload(lambda: uimeta.write_key(uimeta.PLUGIN_KEY, None, runtime.home))
+    #
+    # Only this process's own advert is removed: `hermes plugins doctor` and
+    # `validate` register against a probe context and unload it again, and
+    # without this check that unload would erase the advert of the gateway
+    # that is actually serving, and the app would stop offering push until
+    # the next restart.
+    def withdraw() -> None:
+        current = uimeta.read_key(uimeta.PLUGIN_KEY, runtime.home)
+        if stamp is not None and isinstance(current, dict) and current.get("updatedAt") == stamp:
+            uimeta.write_key(uimeta.PLUGIN_KEY, None, runtime.home)
+
+    ctx.on_unload(withdraw)
 
     logger.info(
         "hermie %s loaded: %s",
