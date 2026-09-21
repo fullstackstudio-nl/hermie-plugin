@@ -90,6 +90,10 @@ value to a queue.
   second address, which is the thing ADR-0017 refused, so the plugin does not
   use it. The capability advert goes in `ui_meta` instead, where the app is
   already looking.
+- **No identity, anywhere in the plugin API.** No hook kwarg, no prompt-section
+  field and no context object names the person a dashboard session was admitted
+  for, even though the gateway stamped it on the session record. §4 explains
+  what the plugin does about that and what it costs.
 - **`gateway.session_context`** — the session variables tools read: `ContextVar`s
   named after the old `HERMES_SESSION_*` environment variables, read through
   `get_session_env(name)` (the variable if it was ever bound here, else the real
@@ -392,19 +396,25 @@ the transport's login (`tui_gateway/server.py::_transport_auth_user_id`). No
 marker in the message text is needed, and none is used.
 
 On the dashboard's own WebSocket route that field is often empty while the
-gateway plainly does know the login, because it carries it in the session
-variables instead: `HERMES_SESSION_USER_ID`, bound when the turn is prepared
-(`tui_gateway/prompt_turn.py::_prepare_turn_input`) and still bound when the
-prompt is built and when `pre_llm_call` fires. So an empty `sender_id` falls
-back to that variable, in the hook **and** in the frozen section — which is the
-only identity the frozen section can reach at all, and the reason the section
-names the right person on that route rather than the default.
+gateway plainly does know the login. Two more places can say so, and both the
+hook and the frozen section ask them in turn:
+
+- **`HERMES_SESSION_USER_ID`**, when something bound it. The variables are
+  bound when the turn is prepared
+  (`tui_gateway/prompt_turn.py::_prepare_turn_input`) and are still bound when
+  the prompt is built and when `pre_llm_call` fires, but the dashboard route
+  binds every other field and leaves this one empty, so on a stock gateway this
+  usually answers nothing. It is asked first anyway: it costs one lookup, and a
+  gateway that *does* fill it has said something more direct than anything the
+  plugin can work out.
+- **The gateway's own session record** — see below, and the reason the feature
+  works at all on a gateway nobody has patched.
 
 Three limits, all real:
 
 1. **An ungated gateway names nobody.** With no auth in front of it there is no
-   `auth_user_id` and nothing bound in the session variables either, so both
-   sources are empty and only the resolved default applies.
+   `auth_user_id` on the record and nothing in the session variables either, so
+   every source is empty and only the resolved default applies.
 2. **`sender_id` is the session's creator, not necessarily this turn's typist.**
    It is stamped when the session is created; a second person attaching to an
    existing session does not change it.
@@ -414,15 +424,53 @@ Three limits, all real:
 
 ### Resolution order
 
-The sender the hook was handed → the sender the gateway bound into the session
-variables → the operator's `context.default_user` → the app's own `default` →
-the only registered person, if there is exactly one. With several registered
-people and no way to tell who is asking, **nothing is injected**: showing a bot
-the wrong person's notes is worse than showing it none.
+The sender the hook was handed → the sender bound into the session variables →
+the login on the gateway's live session record → the operator's
+`context.default_user` → the app's own `default` → the only registered person,
+if there is exactly one. With several registered people and no way to tell who
+is asking, **nothing is injected**: showing a bot the wrong person's notes is
+worse than showing it none.
 
-The two sender steps are one question asked twice, and a gateway that answers
-both answers the same thing; the order between them is only which field is
-filled in on which route.
+The first three are one question asked in three places, and a gateway that
+answers more than one answers the same thing in each. They are ordered by what
+they cost and by how direct they are: a field handed to us, then a variable
+lookup, then a read of somebody else's table. None of them is reached while a
+cheaper one answers.
+
+### The dashboard names nobody to a hook, so the plugin asks the dashboard
+
+A dashboard session is created from an authenticated WebSocket upgrade, and the
+login is stamped on the session record as `auth_user_id` there and then. It is
+simply never handed onwards: `pre_llm_call` gets the agent's `_user_id`, which
+that route leaves empty, and a prompt section gets a mapping built from the
+agent alone. The gateway knows and does not say.
+
+The plugin runs inside `hermes serve`, in the same interpreter as the server
+holding that record. So when nothing else names a sender, `live_session.py`
+looks the session up in `tui_gateway.server._sessions` — by the runtime id that
+table is keyed on, then through the server's own `_session_for_key` for the
+durable key — and reads `_session_auth_user_id(record)`. The ids it tries are
+the hook's `session_id` and Hermes' own `HERMES_UI_SESSION_ID`,
+`HERMES_SESSION_ID` and `HERMES_SESSION_KEY`, because the two id spaces meet
+here and which one names this turn depends on where it came from.
+
+**This reads a private module belonging to somebody else, and that is the
+honest cost of the feature.** Three rules hold it to the smallest version of
+itself:
+
+- **It never imports the gateway.** The lookup is `sys.modules.get`, so a
+  process where the dashboard server is not already loaded — a messaging
+  gateway, the CLI, a test — answers "nobody" instead of importing a server
+  module and running it to ask a question it could not have answered.
+- **It never takes the server's locks.** Reading the table by key is a plain
+  dict lookup; the fallback is the server's own helper, which takes the session
+  lock only long enough to snapshot. Nothing here holds anything while it works.
+- **It reads, checks and returns.** No record is mutated, nothing is cached,
+  every attribute is checked for rather than assumed, and anything unexpected
+  costs the sender rather than the turn. A gateway that does not have these
+  names is a gateway that cannot answer, which is the same as not being asked.
+
+The value comes back as `<provider>:<user id>`, which is the next section.
 
 ### The two spellings of one id
 
@@ -465,10 +513,11 @@ shim rather than a policy:
    value, the shim writes nothing at all; each of the three is written only
    when it is itself empty. The day Hermes fills them on this path, this
    becomes a no-op that nobody has to come back and remove.
-2. **The id may be the gateway's, the name may not be.** `sender_id` is a fact
-   and is used as-is. The display name and the alternative id come from that
-   person's own entry, so a sender the app has never seen gets an id and no
-   name rather than somebody else's.
+2. **The id may be the gateway's, the name may not be.** The sender — handed
+   to the hook, or read off the gateway's own session record — is a fact and
+   is used as-is, provider prefix and all. The display name and the
+   alternative id come from that person's own entry, so a sender the app has
+   never seen gets an id and no name rather than somebody else's.
 3. **Asking is not filling.** `context.session_vars: false` switches off this
    write. It does not switch off *reading* `HERMES_SESSION_USER_ID` to find out
    who is asking — that is the resolution order above, it writes nothing, and

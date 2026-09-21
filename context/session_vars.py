@@ -43,6 +43,16 @@ USER_NAME = "HERMES_SESSION_USER_NAME"
 
 NAMES = (USER_ID, USER_ID_ALT, USER_NAME)
 
+# The ids of the turn itself, read (never written) to find this session in the
+# gateway's own table. The dashboard keys that table by the runtime id it
+# minted, which is the first of these; the other two are the durable ones a
+# hook is more likely to carry.
+UI_SESSION_ID = "HERMES_UI_SESSION_ID"
+SESSION_ID = "HERMES_SESSION_ID"
+SESSION_KEY = "HERMES_SESSION_KEY"
+
+SESSION_NAMES = (UI_SESSION_ID, SESSION_ID, SESSION_KEY)
+
 
 def hermes_session_context() -> Optional[Any]:
     """Hermes' own session-variable module, or ``None`` outside a gateway."""

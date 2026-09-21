@@ -1,8 +1,18 @@
-"""Filling in Hermes' session user variables, and leaving them alone."""
+"""Who the module decides is asking, and what it tells Hermes about them."""
+
+import types
 
 from hermie_plugin.context import ContextModule
+from hermie_plugin.context.live_session import GATEWAY_MODULE, LiveSessions
 from hermie_plugin.context.render import read_section
-from hermie_plugin.context.session_vars import USER_ID, USER_ID_ALT, USER_NAME, SessionVars
+from hermie_plugin.context.session_vars import (
+    SESSION_NAMES,
+    UI_SESSION_ID,
+    USER_ID,
+    USER_ID_ALT,
+    USER_NAME,
+    SessionVars,
+)
 
 
 class FakeVariable:
@@ -19,7 +29,8 @@ class FakeSessionContext:
     """The two things the shim uses out of `gateway.session_context`."""
 
     def __init__(self, **values):
-        self._VAR_MAP = {name: FakeVariable(values.get(name, "")) for name in (USER_ID, USER_ID_ALT, USER_NAME)}
+        names = (USER_ID, USER_ID_ALT, USER_NAME) + SESSION_NAMES
+        self._VAR_MAP = {name: FakeVariable(values.get(name, "")) for name in names}
 
     def get_session_env(self, name, default=""):
         variable = self._VAR_MAP.get(name)
@@ -53,8 +64,23 @@ def bag(users, default=""):
     return {"context": {"v": 1, "default": default, "users": users}}
 
 
-def module_for(sections, hermes, settings=None):
-    return ContextModule(FakeRuntime(sections, settings), session_vars=SessionVars(hermes))
+def module_for(sections, hermes, settings=None, gateway=None):
+    return ContextModule(
+        FakeRuntime(sections, settings),
+        session_vars=SessionVars(hermes),
+        live_sessions=LiveSessions(gateway),
+    )
+
+
+def fake_gateway(auth_user_id, *, sid="sid-1", session_key="key-1"):
+    """A stand-in for the dashboard's server module and its session table."""
+    module = types.ModuleType(GATEWAY_MODULE)
+    module._sessions = {sid: {"session_key": session_key, "auth_user_id": auth_user_id}}
+    module._session_for_key = lambda key: next(
+        (item for item in module._sessions.values() if item.get("session_key") == key), None
+    )
+    module._session_auth_user_id = lambda session: (session or {}).get("auth_user_id")
+    return module
 
 
 def test_the_variables_are_filled_when_they_are_empty():
@@ -236,3 +262,71 @@ def test_a_covered_sender_is_recognised_without_re_reading_the_metadata():
     reads = runtime.reads
     assert module.on_pre_llm_call(session_id="s1", sender_id="self-hosted:ef11a9") is None
     assert runtime.reads == reads
+
+
+# -- the live session record -------------------------------------------------
+#
+# The dashboard names nobody to a hook and nobody in the prompt section's
+# mapping, but it stamped the login on its own session record.
+
+
+def two_logins():
+    return [("", bag({"ef11a9": {"displayName": "Sebas"}, "ana": {"displayName": "Ana"}}))]
+
+
+def test_the_live_record_names_the_sender_when_nothing_else_does():
+    module = module_for(two_logins(), FakeSessionContext(), gateway=fake_gateway("self-hosted:ef11a9"))
+
+    added = module.on_pre_llm_call(session_id="key-1", sender_id="")
+    assert "Sebas" in added["context"]
+
+
+def test_the_id_may_come_from_the_session_variables_rather_than_the_hook():
+    hermes = FakeSessionContext(**{UI_SESSION_ID: "sid-1"})
+    module = module_for(two_logins(), hermes, gateway=fake_gateway("self-hosted:ef11a9"))
+
+    assert "Sebas" in module.on_pre_llm_call(session_id="", sender_id="")["context"]
+
+
+def test_the_session_variable_beats_the_live_record():
+    hermes = FakeSessionContext(**{USER_ID: "ana"})
+    module = module_for(two_logins(), hermes, gateway=fake_gateway("self-hosted:ef11a9"))
+
+    assert "Ana" in module.on_pre_llm_call(session_id="key-1", sender_id="")["context"]
+
+
+def test_the_hook_sender_beats_both():
+    hermes = FakeSessionContext(**{USER_ID: "ana"})
+    module = module_for(two_logins(), hermes, gateway=fake_gateway("self-hosted:ef11a9"))
+
+    assert "Sebas" in module.on_pre_llm_call(session_id="key-1", sender_id="ef11a9")["context"]
+
+
+def test_the_frozen_section_asks_the_live_record_too():
+    module = module_for(two_logins(), FakeSessionContext(), gateway=fake_gateway("self-hosted:ef11a9"))
+
+    text = module.render_section({"session_id": "key-1", "profile_name": "jurist"})
+    assert "Sebas" in text
+    assert module.on_pre_llm_call(session_id="key-1", sender_id="") is None
+
+
+def test_a_session_admitted_under_no_login_leaves_the_order_alone():
+    module = module_for(two_logins(), FakeSessionContext(), gateway=fake_gateway(None))
+
+    assert module.render_section({"session_id": "key-1", "profile_name": "jurist"}) == ""
+    assert module.on_pre_llm_call(session_id="key-1", sender_id="") is None
+
+
+def test_the_live_login_is_what_hermes_is_told_this_turn():
+    """The prefixed id is the gateway's own fact; the name is the app's."""
+    hermes = FakeSessionContext()
+    module = module_for(
+        [("ef11a9", bag({"ef11a9": {"displayName": "Sebas", "userIdAlt": "alt-1"}}))],
+        hermes,
+        gateway=fake_gateway("self-hosted:ef11a9"),
+    )
+
+    module.on_pre_llm_call(session_id="key-1", sender_id="")
+    assert hermes.snapshot()[USER_ID] == "self-hosted:ef11a9"
+    assert hermes.snapshot()[USER_NAME] == "Sebas"
+    assert hermes.snapshot()[USER_ID_ALT] == "alt-1"
