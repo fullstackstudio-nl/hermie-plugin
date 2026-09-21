@@ -2,12 +2,14 @@
 
 from hermie_plugin.push.registrations import (
     Section,
+    Seen,
     is_muted,
+    looking_at,
     mutes_of,
     read_section,
     read_sections,
     registration_of,
-    someone_attached,
+    seen_of,
 )
 
 
@@ -73,9 +75,56 @@ def test_the_section_survives_anything():
 
 
 def test_seen_is_a_heartbeat_with_a_window():
-    section = Section(seen={"i1": 1000})
-    assert someone_attached(section, now=1050, window_seconds=90) is True
-    assert someone_attached(section, now=1200, window_seconds=90) is False
+    section = Section(seen={"i1": Seen(at=1000, bot="jurist")})
+    assert looking_at(section, "i1", "jurist", now=1050, window_seconds=90) is True
+    assert looking_at(section, "i1", "jurist", now=1200, window_seconds=90) is False
+
+
+def test_a_heartbeat_is_about_one_device_and_one_chat():
+    section = Section(seen={"i1": Seen(at=1000, bot="jurist")})
+    assert looking_at(section, "i1", "marketing", now=1050, window_seconds=90) is False
+    assert looking_at(section, "i2", "jurist", now=1050, window_seconds=90) is False
+
+
+def test_a_heartbeat_that_names_no_bot_still_covers_every_chat():
+    """The older shape said a chat was open without saying which."""
+    section = Section(seen={"i1": Seen(at=1000)})
+    assert looking_at(section, "i1", "anything", now=1050, window_seconds=90) is True
+
+
+def test_both_heartbeat_shapes_read():
+    assert seen_of(1000) == Seen(at=1000, bot="")
+    assert seen_of({"bot": "jurist", "at": 1000}) == Seen(at=1000, bot="jurist")
+    for junk in (None, 0, -5, "now", True, {}, {"bot": "jurist"}, {"at": "now"}):
+        assert seen_of(junk) is None
+
+
+def test_a_heartbeat_can_ride_the_registration_entry():
+    section = read_section(
+        {"push": {"registrations": {"i1": expo_entry(seen={"bot": "jurist", "at": 1000})}}}
+    )
+    assert section.seen == {"i1": Seen(at=1000, bot="jurist")}
+
+
+def test_the_newest_heartbeat_wins():
+    """"Is somebody looking now" has one right answer, and it is the latest one."""
+    section = read_section(
+        {
+            "push": {
+                "registrations": {"i1": expo_entry(seen={"bot": "jurist", "at": 1000})},
+                "seen": {"i1": {"bot": "marketing", "at": 2000}},
+            }
+        }
+    )
+    assert section.seen["i1"] == Seen(at=2000, bot="marketing")
+
+    across_keys = read_sections(
+        [
+            ("", {"push": {"seen": {"i1": {"bot": "marketing", "at": 2000}}}}),
+            ("u1", {"push": {"seen": {"i1": {"bot": "jurist", "at": 1000}}}}),
+        ]
+    )
+    assert across_keys.seen["i1"] == Seen(at=2000, bot="marketing")
 
 
 # -- one key per person ------------------------------------------------------

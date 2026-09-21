@@ -58,9 +58,20 @@ class Registration:
 
 
 @dataclass(frozen=True)
+class Seen:
+    """One device saying what it is looking at, and when it last said so."""
+
+    at: int
+    # Which chat that device has open. Empty means the device said only that
+    # somebody was looking, without naming a bot — the shape older apps wrote.
+    bot: str = ""
+
+
+@dataclass(frozen=True)
 class Section:
     registrations: List[Registration] = field(default_factory=list)
-    seen: Dict[str, int] = field(default_factory=dict)
+    # installation id -> that device's heartbeat.
+    seen: Dict[str, Seen] = field(default_factory=dict)
     # user id -> bot -> the second at which the mute lapses, 0 meaning never.
     mutes: Dict[str, Dict[str, int]] = field(default_factory=dict)
 
@@ -76,6 +87,58 @@ def _number(value: Any) -> int:
 def _types(value: Any) -> Dict[str, bool]:
     source = value if isinstance(value, dict) else {}
     return {name: source.get(name) is True for name in PUSH_TYPES}
+
+
+def seen_of(value: Any) -> Optional[Seen]:
+    """One heartbeat, in either shape, or nothing.
+
+    The shape the app writes now says which chat the device has open:
+
+        seen: {"<installation id>": {"bot": "<bot>", "at": <unix second>}}
+
+    A bare number is the older shape and means "looking at some chat", with no
+    way to tell which. It is read for one version and it suppresses the same way
+    it always did — for every chat on that one device.
+    """
+    if isinstance(value, dict):
+        at = _number(value.get("at"))
+        return Seen(at=at, bot=_text(value.get("bot"))) if at > 0 else None
+    at = _number(value)
+    return Seen(at=at) if at > 0 else None
+
+
+def _remember(into: Dict[str, Seen], installation_id: str, heartbeat: Optional[Seen]) -> None:
+    """Keep the newer of two heartbeats for one device.
+
+    A heartbeat can arrive from the `seen` map and from the registration entry
+    itself, and across two keys while the app migrates. Newest wins, because the
+    question it answers is "is somebody looking *now*" and an older answer to
+    that is simply a worse one.
+    """
+    if heartbeat is None or not installation_id:
+        return
+    current = into.get(installation_id)
+    if current is None or heartbeat.at >= current.at:
+        into[installation_id] = heartbeat
+
+
+def looking_at(
+    section: Section, installation_id: str, bot: str, now: float, window_seconds: int
+) -> bool:
+    """Is *this device* looking at *this bot's* chat right now?
+
+    The gateway cannot be asked who is watching — `session.active_list` reports
+    the calling connection's own session and nobody else's — so this stays what
+    ADR-0017 called it: a heartbeat the app writes and this reads. It is a
+    heuristic, and it fails towards a redundant notification for a chat somebody
+    is already reading, which is the right direction.
+    """
+    heartbeat = section.seen.get(installation_id)
+    if heartbeat is None or now - heartbeat.at > window_seconds:
+        return False
+    # A heartbeat that names no bot is the older shape: it says a chat is open
+    # without saying which, so it still covers every chat on that device.
+    return not heartbeat.bot or heartbeat.bot == bot
 
 
 def _mutes(value: Any) -> Dict[str, int]:
@@ -165,16 +228,23 @@ def read_section(app_key_value: Any, user_id: str = "") -> Section:
         return empty
 
     rows = push.get("registrations") if isinstance(push.get("registrations"), dict) else {}
-    registrations = [
-        parsed
-        for installation_id, value in rows.items()
-        if (parsed := registration_of(str(installation_id), value, user_id)) is not None
-    ]
+    registrations: List[Registration] = []
+    seen: Dict[str, Seen] = {}
+    for key, value in rows.items():
+        installation_id = str(key)
+        parsed = registration_of(installation_id, value, user_id)
+        if parsed is not None:
+            registrations.append(parsed)
+        # A heartbeat filed on the registration itself is honoured too, for an
+        # app that keeps a device's "what am I looking at" beside the device.
+        if isinstance(value, dict):
+            _remember(seen, installation_id, seen_of(value.get("seen")))
     # A stable order, so a run's log and a test read the same twice.
     registrations.sort(key=lambda entry: entry.installation_id)
 
     raw_seen = push.get("seen") if isinstance(push.get("seen"), dict) else {}
-    seen = {str(key): _number(at) for key, at in raw_seen.items() if _number(at) > 0}
+    for key, value in raw_seen.items():
+        _remember(seen, str(key), seen_of(value))
 
     mutes = mutes_of(app_key_value)
     return Section(registrations=registrations, seen=seen, mutes={user_id: mutes} if mutes else {})
@@ -189,28 +259,17 @@ def read_sections(items: Iterable[Tuple[str, Any]]) -> Section:
     while the app writes both, nobody is notified twice.
     """
     by_installation: Dict[str, Registration] = {}
-    seen: Dict[str, int] = {}
+    seen: Dict[str, Seen] = {}
     mutes: Dict[str, Dict[str, int]] = {}
     for user_id, value in items:
         section = read_section(value, user_id)
         for registration in section.registrations:
             by_installation[registration.installation_id] = registration
-        seen.update(section.seen)
+        for installation_id, heartbeat in section.seen.items():
+            _remember(seen, installation_id, heartbeat)
         mutes.update(section.mutes)
     return Section(
         registrations=sorted(by_installation.values(), key=lambda entry: entry.installation_id),
         seen=seen,
         mutes=mutes,
     )
-
-
-def someone_attached(section: Section, now: float, window_seconds: int) -> bool:
-    """Was any device looking at a chat within the window?
-
-    The gateway cannot be asked who is watching — `session.active_list` reports
-    the calling connection's own session and nobody else's — so this stays what
-    ADR-0017 called it: a heartbeat the app writes and this reads. It is a
-    heuristic, and it fails towards a redundant notification for a chat somebody
-    is already reading, which is the right direction.
-    """
-    return any(now - at <= window_seconds for at in section.seen.values())

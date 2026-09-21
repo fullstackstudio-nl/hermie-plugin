@@ -21,7 +21,7 @@ That is the whole install. Hermes clones the repo into
 
 | | |
 |---|---|
-| **A bot wrote something** | a notification, unless the app says somebody is reading that chat |
+| **A bot wrote something** | a notification, except on the device that says it is reading that chat |
 | **A bot is asking for approval** | a notification with Allow and Deny, never suppressed |
 | **A bot asked a question** | a notification, never suppressed |
 | **A turn finished or failed** | a notification, if the device asked for those |
@@ -67,8 +67,8 @@ plugins:
           # "never" forbids message text gateway-wide, whatever a device asked.
           preview: device
 
-          # How recent a device's "I am looking at a chat" heartbeat must be
-          # before a new-message notification is held back.
+          # How recent a device's "I am looking at this chat" heartbeat must
+          # be before a new-message notification is held back on that device.
           attached_window_seconds: 90
 
           # Grace period before a message notification goes out, so an app that

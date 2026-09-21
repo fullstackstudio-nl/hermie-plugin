@@ -1,7 +1,7 @@
 """What a hook's kwargs become, and who is told."""
 
 from hermie_plugin.push import events
-from hermie_plugin.push.registrations import Registration, Section
+from hermie_plugin.push.registrations import Registration, Section, Seen
 
 
 def registration(installation_id="i1", *, preview=False, types=None, transport="expo", user_id=""):
@@ -75,12 +75,48 @@ def test_the_gateway_setting_is_a_ceiling_not_a_floor():
     assert preview is False
 
 
-def test_a_message_is_suppressed_while_somebody_is_looking():
+def test_a_message_is_suppressed_on_the_device_reading_that_chat():
     note = events.from_assistant_message(
         bot="b", session_id="s", turn_id="t", assistant_response="hello", at=10
     )
-    watching = Section(registrations=[registration()], seen={"i1": 990})
+    watching = Section(registrations=[registration()], seen={"i1": Seen(at=990, bot="b")})
     assert deliver(note, watching) == []
+
+
+def test_the_other_devices_of_the_same_person_are_still_told():
+    """A phone in a pocket should buzz while the same person reads on a laptop."""
+    note = events.from_assistant_message(
+        bot="b", session_id="s", turn_id="t", assistant_response="hello", at=10
+    )
+    section = Section(
+        registrations=[registration("i1", user_id="u1"), registration("i2", user_id="u1")],
+        seen={"i1": Seen(at=990, bot="b")},
+    )
+    assert [entry.installation_id for entry, _ in deliver(note, section)] == ["i2"]
+
+
+def test_a_device_reading_another_chat_is_still_told():
+    note = events.from_assistant_message(
+        bot="b", session_id="s", turn_id="t", assistant_response="hello", at=10
+    )
+    elsewhere = Section(registrations=[registration()], seen={"i1": Seen(at=990, bot="other")})
+    assert len(deliver(note, elsewhere)) == 1
+
+
+def test_a_heartbeat_that_names_no_chat_suppresses_every_chat_on_that_device():
+    note = events.from_assistant_message(
+        bot="b", session_id="s", turn_id="t", assistant_response="hello", at=10
+    )
+    watching = Section(registrations=[registration()], seen={"i1": Seen(at=990)})
+    assert deliver(note, watching) == []
+
+
+def test_a_stale_heartbeat_suppresses_nothing():
+    note = events.from_assistant_message(
+        bot="b", session_id="s", turn_id="t", assistant_response="hello", at=10
+    )
+    stale = Section(registrations=[registration()], seen={"i1": Seen(at=500, bot="b")})
+    assert len(deliver(note, stale)) == 1
 
 
 def test_a_request_is_never_suppressed():
@@ -88,8 +124,16 @@ def test_a_request_is_never_suppressed():
     note = events.from_approval(
         bot="b", session_key="s", description="delete the build directory", request_id="r1", turn_id="t", at=10
     )
-    watching = Section(registrations=[registration()], seen={"i1": 990})
+    watching = Section(registrations=[registration()], seen={"i1": Seen(at=990, bot="b")})
     assert len(deliver(note, watching)) == 1
+
+
+def test_a_cron_and_a_failed_turn_are_never_suppressed_either():
+    watching = Section(registrations=[registration()], seen={"i1": Seen(at=990, bot="b")})
+    failed = events.from_session_end(
+        bot="b", session_id="s", turn_id="t", completed=False, failed=True, interrupted=False, at=10
+    )
+    assert len(deliver(failed, watching)) == 1
 
 
 def test_a_type_the_gateway_switched_off_reaches_nobody():

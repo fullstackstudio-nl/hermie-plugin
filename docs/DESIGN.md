@@ -238,11 +238,33 @@ do not. Claims live in the state file for 24 hours.
 
 ### Suppression
 
-A `message` is suppressed when any registration's `seen` heartbeat is within the
-window (90s by default), after a short delay (5s) that lets an opening app claim
-the chat. `request`, `cron` and `turn_failed` are **never** suppressed. This is
-the heuristic ADR-0017 described and it fails towards a redundant notification
-for a chat somebody is already reading, which is the right direction.
+A `message` is suppressed **on the device that is reading that chat**, and only
+there. The app writes a heartbeat per device saying which bot it has open:
+
+```yaml
+hermie-app:owner:
+  push:
+    seen:
+      <installation id>: {bot: jurist, at: 1789957143}
+```
+
+A device is skipped when its own heartbeat is within the window (90s by
+default) and names this bot, after a short delay (5s) that lets an opening app
+claim the chat. Every other device of the same person is still notified — a
+phone in a pocket should buzz while the same person reads that chat on a
+laptop — and a device reading a *different* bot is notified too.
+
+A heartbeat that is a bare number is the older shape: it says a chat was open
+without saying which, so it suppresses every chat on that one device. It is read
+for one version. A heartbeat may also ride the registration entry itself, as
+`seen` beside `transport` and `token`, for an app that keeps a device's "what am
+I looking at" next to the device; where both exist the **newest** wins, since
+the question is whether somebody is looking *now*.
+
+`request`, `cron` and `turn_failed` are **never** suppressed. This is the
+heuristic ADR-0017 described and it still fails towards a redundant notification
+for a chat somebody is already reading, which is the right direction — it is now
+one notification on one device rather than silence on all of them.
 
 ### Mutes
 

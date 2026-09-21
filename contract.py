@@ -23,6 +23,43 @@ Two rules keep this honest in both directions:
   the key, a plugin that is installed but disabled, and no plugin at all are
   indistinguishable to the app, and all three mean the same thing: do not offer
   the feature.
+
+The other half of the contract is what the **app** writes, under its own key —
+one per person, ``hermie-app:<user id>``, with the older shared ``hermie-app``
+read for one more version. The readers are ``push/registrations.py`` and
+``context/render.py``; this is the shape they agree on::
+
+    hermie-app:<user id>:
+      mutes:                        # bot -> until (unix seconds, 0 = forever)
+        jurist: 0
+        marketing: 1790000000
+      push:
+        registrations:
+          <installation id>:
+            v: 1
+            transport: expo         # or "webpush"
+            token: "..."            # expo only
+            endpoint: "..."         # webpush only, with keys.p256dh + keys.auth
+            platform: ios
+            types: {message: true, request: true, cron: true,
+                    turn_done: false, turn_failed: false}
+            preview: false
+            updatedAt: 1789957143
+        seen:                       # the heartbeat, per device
+          <installation id>: {bot: jurist, at: 1789957143}
+      context:
+        v: 1
+        default: <user id>
+        users:
+          <user id>: {displayName: "...", userIdAlt: "...", about: "...",
+                      device: {model: "...", os: "...", appVersion: "..."},
+                      timezone: "Europe/Amsterdam", locale: "nl-NL",
+                      perBot: {<bot>: "..."}, updatedAt: 1789957143}
+
+Two of those are new and both are read tolerantly for one version: a ``seen``
+value that is a bare number is the older "looking at some chat" shape, and the
+whole bag may still be the shared ``hermie-app``. ``mutes`` is also read from
+``push.mutes`` for an app that files it with the push settings.
 """
 
 from __future__ import annotations

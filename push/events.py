@@ -9,9 +9,11 @@ Three rules shape it, all of them from ADR-0017:
 - **The payload says who, not what.** A bot's name and an event type. The text
   rides only when that device turned `preview` on AND the gateway allows it, and
   the gateway's setting is the stricter of the two.
-- **A message is suppressed while somebody is looking.** Requests are not. A
-  question with a countdown on it is worth a buzz even if the chat is open on a
-  tablet in another room.
+- **A message is suppressed on the device that is looking at that chat.** Not on
+  the others, and not for another bot: a phone in a pocket should still buzz
+  while the same person reads that chat on a laptop. Requests are not
+  suppressed at all — a question with a countdown on it is worth a buzz even if
+  the chat is open in another room.
 - **A muted bot is silent on every device that person owns.** That one is not a
   heuristic and not per type: somebody said no.
 - **Every notification is a hint, never an instruction.** Nothing in a payload
@@ -25,7 +27,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from .registrations import Registration, Section, is_muted, someone_attached
+from .registrations import Registration, Section, is_muted, looking_at
 
 PAYLOAD_VERSION = 1
 
@@ -196,9 +198,7 @@ def recipients(
     """
     if notification.type not in enabled_types:
         return []
-
-    if notification.type not in NEVER_SUPPRESSED and someone_attached(section, now, attached_window_seconds):
-        return []
+    suppressible = notification.type not in NEVER_SUPPRESSED
 
     out: List[tuple[Registration, bool]] = []
     for registration in section.registrations:
@@ -208,6 +208,13 @@ def recipients(
         # per-type switch: it silences this bot on every device that person
         # registered, including the types that are never suppressed.
         if is_muted(section, registration.user_id, notification.bot, now):
+            continue
+        # Suppression is per device and per chat: this one says it is reading
+        # this bot right now, so it is told nothing. Every other device of the
+        # same person still is.
+        if suppressible and looking_at(
+            section, registration.installation_id, notification.bot, now, attached_window_seconds
+        ):
             continue
         if retired(registration.installation_id, registration.updated_at):
             continue
