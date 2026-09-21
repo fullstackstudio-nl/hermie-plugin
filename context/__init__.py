@@ -205,11 +205,12 @@ class ContextModule:
     def fill_session_vars(self, sender_id: str, section_of: Callable[[], ContextSection]) -> Dict[str, str]:
         """Fill in `HERMES_SESSION_USER_*` for this call when they are empty.
 
-        Whose turn it is comes from the same order the rest of the module uses:
-        the sender the gateway named, then the resolved default. A gateway that
-        already knows is left alone — this is a shim over a gap, and it goes
-        quiet the day the gap closes. See `session_vars.py` for what the write
-        can and cannot reach.
+        Whose turn it is comes from the same order the rest of the module
+        uses: the sender the caller worked out — handed to the hook, bound into
+        the variables, or read off the live session record — and then the
+        resolved default. A gateway that already knows is left alone: this is a
+        shim over a gap, and it goes quiet the day the gap closes. See
+        `session_vars.py` for what the write can and cannot reach.
 
         `section_of` is a callable rather than a section because every gate
         above it is free and reading the section is a file read on the agent's

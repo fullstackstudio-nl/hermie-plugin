@@ -7,7 +7,8 @@ environment only while nothing has bound them. Tools read them: a cron job's
 `user_id`, a kanban card's author, a background watcher's owner.
 
 On the paths Hermie uses they are sometimes empty while the plugin *does* know
-who is asking, because `pre_llm_call` is handed `sender_id` and the app's own
+who is asking: `pre_llm_call` may be handed `sender_id`, the gateway's own
+session record names the login it admitted (`live_session.py`), and the app's
 metadata names the registered person. This module fills in that gap, and only
 that gap:
 

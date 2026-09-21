@@ -502,8 +502,9 @@ are matched as written.
 Hermes carries the identity of a turn in session variables, and tools read them:
 a cron job's `user_id`, a kanban card's author, a background watcher's owner. On
 the paths Hermie uses they are sometimes empty while the plugin *does* know who
-is asking — `pre_llm_call` is handed `sender_id`, and the app's metadata names
-the registered person.
+is asking — from `sender_id`, or from the gateway's own session record, and the
+app's metadata names the registered person either way. On the dashboard route
+that makes this shim the thing that puts the login where a tool can read it.
 
 So `pre_llm_call` fills in `HERMES_SESSION_USER_ID`, `_ID_ALT` and `_NAME` for
 that call, under `context.session_vars` (on by default). Four rules keep it a
