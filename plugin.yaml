@@ -54,8 +54,11 @@ config_schema:
     description: "Inject per-device context into a bot's system prompt."
   push.types:
     type: list
-    default: ["message", "request", "cron", "turn_done", "turn_failed"]
-    description: "Event types this gateway may notify about at all."
+    default: ["message", "request", "cron", "cron_done", "cron_failed", "turn_done", "turn_failed"]
+    description: >-
+      Event types this gateway may notify about at all. `cron` is a scheduled
+      job delivering something, `cron_done` and `cron_failed` are that job's
+      turn ending.
   push.preview:
     type: str
     default: "device"

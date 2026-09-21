@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .. import contract
+from . import cron as cron_signal
 from . import events, expo, webpush
 from .registrations import Section, read_sections
 
@@ -88,7 +89,30 @@ class PushModule:
             found.append(contract.CAP_PUSH_TURN_DONE)
         if "turn_failed" in self.enabled_types:
             found.append(contract.CAP_PUSH_TURN_FAILED)
+        if "cron_done" in self.enabled_types:
+            found.append(contract.CAP_PUSH_CRON_DONE)
+        if "cron_failed" in self.enabled_types:
+            found.append(contract.CAP_PUSH_CRON_FAILED)
+        if self.cron_signal_available():
+            found.append(contract.CAP_PUSH_CRON_SIGNAL)
         return found
+
+    def cron_signal_available(self) -> bool:
+        """Whether a cron run can be recognised without guessing at `platform`.
+
+        `task_id` is a kwarg on every turn hook this plugin registers, so the
+        first signal is there whenever Hermes is new enough to send it; the
+        session variable answers on any gateway that has the name at all. This
+        asks the second, because it is the one that can be absent, and a
+        capability names what is there rather than what shipped.
+        """
+        try:
+            from ..context.session_vars import hermes_session_context
+
+            module = hermes_session_context()
+            return module is not None and cron_signal.CRON_SESSION in getattr(module, "_VAR_MAP", {})
+        except Exception:
+            return False
 
     # -- the queue -----------------------------------------------------------
 
@@ -241,26 +265,39 @@ class PushModule:
     # receiving fields that are added later; **kwargs is the forward-compatible
     # shape, and `hermes plugins doctor` checks for it.
 
+    def cron_of(self, kwargs: Dict[str, Any]) -> Optional[cron_signal.Cron]:
+        """Whether this turn belongs to a scheduled job. See `cron.py`."""
+        return cron_signal.detect(kwargs, session_var=cron_signal.read_session_var())
+
     def on_post_llm_call(self, **kwargs: Any) -> None:
         bot = self.runtime.bot_name()
         session_id = str(kwargs.get("session_id") or "")
-        platform = str(kwargs.get("platform") or "")
-        notification = events.from_assistant_message(
-            bot=bot,
-            session_id=session_id,
-            turn_id=str(kwargs.get("turn_id") or ""),
-            assistant_response=kwargs.get("assistant_response"),
-            at=int(time.time()),
-        )
-        if notification is None:
+        turn_id = str(kwargs.get("turn_id") or "")
+        at = int(time.time())
+        cron = self.cron_of(kwargs)
+        if cron is not None:
+            self.offer(
+                events.from_cron_delivery(
+                    bot=bot,
+                    session_id=session_id,
+                    turn_id=turn_id,
+                    assistant_response=kwargs.get("assistant_response"),
+                    at=at,
+                    cron=cron,
+                ),
+                delay=True,
+            )
             return
-        # Hermes fires no cron-specific hook, so a cron delivery is recognised
-        # only by the platform its session runs under. This is a heuristic and
-        # DESIGN.md says so; when it misfires the message is notified as a
-        # message, which is what it also is.
-        if "cron" in platform.lower():
-            notification = events.Notification(**{**notification.__dict__, "type": "cron", "body": "Cron delivered"})
-        self.offer(notification, delay=True)
+        self.offer(
+            events.from_assistant_message(
+                bot=bot,
+                session_id=session_id,
+                turn_id=turn_id,
+                assistant_response=kwargs.get("assistant_response"),
+                at=at,
+            ),
+            delay=True,
+        )
 
     def on_session_end(self, **kwargs: Any) -> None:
         self.offer(
@@ -272,6 +309,7 @@ class PushModule:
                 failed=kwargs.get("failed"),
                 interrupted=kwargs.get("interrupted"),
                 at=int(time.time()),
+                cron=self.cron_of(kwargs),
             ),
             delay=True,
         )

@@ -27,6 +27,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+from .cron import Cron, declared_failure
 from .registrations import Registration, Section, is_muted, looking_at
 
 PAYLOAD_VERSION = 1
@@ -34,10 +35,16 @@ PAYLOAD_VERSION = 1
 # Everything the app is told about. Hermes fires no hook when a bot-to-bot
 # message arrives (see DESIGN.md), so there is no type for one: a switch that
 # turns nothing on is worse than no switch.
-TYPES = ("message", "request", "cron", "turn_done", "turn_failed")
+TYPES = ("message", "request", "cron", "cron_done", "cron_failed", "turn_done", "turn_failed")
 
 # Types a device is told about even when it says somebody is watching.
-NEVER_SUPPRESSED = ("request", "cron", "turn_failed")
+#
+# `cron_done` is deliberately NOT here while `cron` and `cron_failed` are. A
+# scheduled job that finished is the quietest good news this plugin carries, and
+# a device that says it is reading that very chat is already looking at it. A
+# job that FAILED is the opposite: nobody asked for the run, so nobody is
+# waiting to notice that it did not work.
+NEVER_SUPPRESSED = ("request", "cron", "cron_failed", "turn_failed")
 
 
 @dataclass(frozen=True)
@@ -153,30 +160,106 @@ def from_clarify(*, bot: str, session_id: str, tool_call_id: Any, question: Any,
 
 
 def from_session_end(
-    *, bot: str, session_id: str, turn_id: Any, completed: Any, failed: Any, interrupted: Any, at: int
+    *,
+    bot: str,
+    session_id: str,
+    turn_id: Any,
+    completed: Any,
+    failed: Any,
+    interrupted: Any,
+    at: int,
+    cron: Optional["Cron"] = None,
 ) -> Optional[Notification]:
-    """A turn finished, one way or another (`on_session_end`)."""
+    """A turn finished, one way or another (`on_session_end`).
+
+    A cron run is an ordinary agent session, so this is also where a scheduled
+    job's turn ends. It gets its own two types rather than borrowing
+    `turn_done` and `turn_failed`, because the two answer different questions:
+    a turn is something the person started and is waiting on, and a cron run is
+    something that happened while they were not looking.
+    """
     if interrupted:
         # Somebody pressed stop. They know.
         return None
+    scheduled = cron is not None
     if failed or not completed:
         return Notification(
-            type="turn_failed",
+            type="cron_failed" if scheduled else "turn_failed",
             bot=bot,
             title=bot,
-            body="A turn failed",
+            body=_cron_body(cron, "A scheduled job failed") if scheduled else "A turn failed",
             session_id=session_id,
             at=at,
-            event_id=event_id("turn_failed", session_id, turn_id),
+            event_id=event_id("cron_failed" if scheduled else "turn_failed", session_id, turn_id),
+            extra=_cron_extra(cron),
         )
     return Notification(
-        type="turn_done",
+        type="cron_done" if scheduled else "turn_done",
         bot=bot,
         title=bot,
-        body="Finished working",
+        body=_cron_body(cron, "A scheduled job finished") if scheduled else "Finished working",
         session_id=session_id,
         at=at,
-        event_id=event_id("turn_done", session_id, turn_id),
+        event_id=event_id("cron_done" if scheduled else "turn_done", session_id, turn_id),
+        extra=_cron_extra(cron),
+    )
+
+
+def _cron_body(cron: Optional["Cron"], fallback: str) -> str:
+    """The lock-screen line. A job id is a name the person chose, so it is shown."""
+    return f"{fallback}: {cron.job_id}" if cron is not None and cron.job_id else fallback
+
+
+def _cron_extra(cron: Optional["Cron"]) -> Dict[str, Any]:
+    """What rides in the payload, and how sure the gateway is that it is a cron.
+
+    `certain` is there so the app does not have to guess at how the gateway
+    guessed. A turn recognised by the platform string alone is still a guess,
+    and an app that wants to say "scheduled job" rather than "message" should
+    be able to tell the two apart.
+    """
+    if cron is None:
+        return {}
+    extra: Dict[str, Any] = {"cron": True, "cronCertain": cron.certain}
+    if cron.job_id:
+        extra["jobId"] = cron.job_id
+    return extra
+
+
+def from_cron_delivery(
+    *, bot: str, session_id: str, turn_id: str, assistant_response: Any, at: int, cron: "Cron"
+) -> Optional[Notification]:
+    """A scheduled job delivered something (`post_llm_call` inside a cron run).
+
+    The agent may also have declared its own failure on the first line, which is
+    the one kind of job failure a turn can see — the scheduler decides the rest
+    after the agent is gone and fires no hook about it.
+    """
+    text = _clean(assistant_response, 400)
+    if not text:
+        return None
+    if declared_failure(assistant_response):
+        return Notification(
+            type="cron_failed",
+            bot=bot,
+            title=bot,
+            body=_cron_body(cron, "A scheduled job failed"),
+            text=text,
+            session_id=session_id,
+            at=at,
+            event_id=event_id("cron_failed", session_id, turn_id),
+            extra=_cron_extra(cron),
+        )
+    return Notification(
+        type="cron",
+        bot=bot,
+        title=bot,
+        body=_cron_body(cron, "Cron delivered"),
+        text=text,
+        session_id=session_id,
+        at=at,
+        event_id=event_id("message", session_id, turn_id),
+        extra=_cron_extra(cron),
     )
 
 

@@ -93,6 +93,13 @@ CAP_PUSH_PREVIEW = "push.preview"
 CAP_PUSH_MUTE = "push.mute"
 CAP_PUSH_TURN_DONE = "push.type.turn_done"
 CAP_PUSH_TURN_FAILED = "push.type.turn_failed"
+CAP_PUSH_CRON_DONE = "push.type.cron_done"
+CAP_PUSH_CRON_FAILED = "push.type.cron_failed"
+# Says the gateway recognises a cron run by the marker the scheduler binds,
+# rather than by looking for "cron" in a free-text platform string. An app that
+# sees it can label a notification "scheduled job" and mean it; an app that does
+# not is talking to a gateway whose cron answers were always a guess.
+CAP_PUSH_CRON_SIGNAL = "push.cron.signal"
 CAP_PUSH_SEEN_PER_CHAT = "push.seen.per_chat"
 CAP_UIMETA_PER_USER = "ui_meta.per_user"
 CAP_CONTEXT_PROMPT = "context.system_prompt"

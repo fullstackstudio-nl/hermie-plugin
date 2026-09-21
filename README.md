@@ -25,7 +25,8 @@ That is the whole install. Hermes clones the repo into
 | **A bot is asking for approval** | a notification with Allow and Deny, never suppressed |
 | **A bot asked a question** | a notification, never suppressed |
 | **A turn finished or failed** | a notification, if the device asked for those |
-| **A cron job delivered** | a notification, recognised by the session's platform |
+| **A cron job delivered** | a notification, recognised by the scheduler's own marker |
+| **A cron job finished or failed** | a notification, if the device asked for those |
 | **A bot you muted** | nothing, on any of your devices, until the mute lapses |
 
 By default a notification says **who and what kind** — a bot's name and an event
@@ -55,6 +56,9 @@ that cannot work is worse than one that is absent.
 | `push.seen.per_chat` | a `{bot, at}` heartbeat is understood, so suppression is per chat |
 | `push.type.turn_done` | "a turn finished" is switched on |
 | `push.type.turn_failed` | "a turn failed" is switched on |
+| `push.type.cron_done` | "a scheduled job finished" is switched on |
+| `push.type.cron_failed` | "a scheduled job failed" is switched on |
+| `push.cron.signal` | a cron run is recognised by the scheduler's marker, not by a guess |
 | `ui_meta.per_user` | `hermie-app:<user id>` is read, so the app may move its bag |
 | `context.system_prompt` | context is put into the bot's system prompt |
 | `context.per_bot` | a per-bot note is rendered for the bot it names |
@@ -89,7 +93,8 @@ plugins:
         push:
           # Which event types this gateway may notify about at all. A device
           # still has to ask for a type before it receives one.
-          types: [message, request, cron, turn_done, turn_failed]
+          types: [message, request, cron, cron_done, cron_failed,
+                  turn_done, turn_failed]
 
           # "device" honours each device's own preview switch.
           # "never" forbids message text gateway-wide, whatever a device asked.
@@ -183,6 +188,25 @@ sharing notice in Hermie's Settings → Context, then send a message.
 > context section is a name, a device and whatever somebody wrote about
 > themselves. Do not fill it in on a gateway you share with people you would not
 > show it to.
+
+### Scheduled jobs
+
+A cron run is an ordinary agent session — Hermes fires no cron-specific hook —
+so the plugin has to recognise one itself. It asks the scheduler's own marker
+first: the `cron:<job id>:<execution id>` task id, then the `HERMES_CRON_SESSION`
+variable, then the session id. The `platform` string is still read, last, and a
+notification says which kind of answer it got, so the app can tell a fact from a
+guess.
+
+A notification carries the **job id** when the signal had one, which is the name
+you gave the job.
+
+> **`cron_failed` means the run's turn failed, not that the job did.** The
+> scheduler decides a job's real outcome after the agent has gone — an
+> exception, a delivery that did not go through, a quota hold — and fires
+> nothing a plugin could hear. What a turn can see is its own failure and the
+> `[CRON_FAILURE]` line an agent writes about itself. So a failed job is
+> sometimes silent here, and never falsely reported.
 
 ## How this relates to Hermie Web's `--push`
 

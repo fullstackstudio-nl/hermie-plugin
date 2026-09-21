@@ -39,11 +39,13 @@ value to a queue.
 
 ### Hooks that do not exist
 
-- **No cron hook.** There are no hook fire sites in `hermes_cli/cron.py`. A cron
-  run is an ordinary agent session, so the turn hooks fire inside it, but
-  nothing carries a job id or says "this was a cron". The plugin recognises a
-  cron delivery only by the session's `platform` string, which is a heuristic;
-  when it misfires the message is notified as a message, which it also is.
+- **No cron hook.** There are no hook fire sites anywhere in `cron/`. A cron run
+  is an ordinary agent session, so the turn hooks fire inside it — and, it turns
+  out, they carry enough to recognise one without guessing. §3 has the details.
+  What is still missing is the scheduler's own verdict: an exception out of
+  `run_job`, a delivery that failed, a quota hold, the `failure_streak` and
+  `last_status` on the job record and the executions ledger are all written
+  after the agent is gone, and none of them fires anything.
 - **No bot-to-bot message hook.** `tools/bot_mode_dm.py` has no fire site, so
   one bot writing to another **cannot be produced by a plugin**. ADR-0017 listed
   it as a notification type; there is no such type here, because a switch that
@@ -245,7 +247,41 @@ in the app's `ui_meta` and survive any plugin change, including removal.
 | a turn was interrupted | `on_session_end` (`interrupted`) | *nothing — somebody pressed stop* |
 | approval requested | `pre_approval_request` (not `surface: smart`) | `request` |
 | a question asked | `pre_tool_call` (`tool_name == "clarify"`) | `request` |
-| cron delivered | `post_llm_call` with a cron-ish `platform` | `cron` (heuristic) |
+| cron delivered | `post_llm_call` inside a cron run | `cron` |
+| a cron job declared its own failure | `post_llm_call`, `[CRON_FAILURE]` on the first line | `cron_failed` |
+| a cron run's turn finished | `on_session_end` (`completed`) inside a cron run | `cron_done` |
+| a cron run's turn failed | `on_session_end` (`failed`/not completed) inside a cron run | `cron_failed` |
+
+### Recognising a cron run
+
+Hermes fires no cron hook, so this is a question the plugin answers for itself.
+It used to answer it by looking for "cron" in the session's `platform` string,
+which is free text. Two better signals ride the same turn, and core prefers
+both of them over the platform string — `tools/approval.py` says so in as many
+words, because cron binds the platform for delivery routing only.
+
+| Asked | What it is | A fact? |
+|---|---|---|
+| `task_id` | the scheduler mints `cron:<job id>:<execution id>` | yes, and it is the only place a **job id** reaches a hook |
+| `HERMES_CRON_SESSION` | bound to `"1"` for the run, `""` outside it | yes; this is the test core's own unattended-approval check uses |
+| `session_id` | opened as `cron_<job id>_<stamp>` | yes |
+| `platform` | free text | no — the last resort it always was |
+
+Reading the session variable works inside a bounded hook: Hermes runs a
+callback through `contextvars.copy_context().run(...)`, and a copied context
+carries the values it was copied from. It is *writing* one that is lost, which
+is the whole limit of the session-variable shim in §4.
+
+The payload says which kind of answer it got, as `cronCertain`, so an app can
+label a notification "scheduled job" and mean it. `push.cron.signal` advertises
+that this gateway has the marker at all.
+
+**What a turn cannot see is whether the JOB failed.** It can see whether the
+*turn* failed, and it can see the `[CRON_FAILURE]` marker the agent wrote on
+its own first line. Everything else the scheduler decides — after the agent is
+gone, with no hook — so `cron_failed` means "this run's turn failed, or the
+agent said it failed", which is a subset of "this job failed". Closing that gap
+needs a fire site in `cron/scheduler.py`, which is a change to Hermes.
 
 ### Dedupe
 
