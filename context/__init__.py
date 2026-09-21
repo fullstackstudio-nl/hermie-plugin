@@ -14,6 +14,12 @@ the agent's `_user_id`, which on a WebSocket session is the `auth_user_id`
 stamped from the login. What it cannot do is be free: whatever it returns is
 appended to the user's message, on every turn it fires.
 
+On the dashboard's WebSocket route `_user_id` is often empty while the gateway
+does know who logged in, because it carries the login in the session variables
+instead: `HERMES_SESSION_USER_ID`, bound for the turn before the prompt is
+built and still bound at every `pre_llm_call`. Both paths therefore fall back
+to it, which is the one identity a frozen section can reach at all.
+
 So the module uses both, and uses the expensive one as little as possible: the
 frozen section carries the resolved default user, and `pre_llm_call` contributes
 text only when the person actually sending this turn is somebody else. On the
@@ -21,10 +27,10 @@ single-user gateway that is every Hermie install today, the second path never
 fires and the per-turn cost is zero.
 
 Two limits are real and are written down in DESIGN.md rather than papered over:
-an ungated gateway has no `auth_user_id` at all, so `sender_id` is empty and
-only the default applies; and a section frozen at session start does not change
-when the person edits their profile, so an edit reaches a long-running Bot Chat
-on its next session.
+an ungated gateway names nobody anywhere — no `auth_user_id`, nothing bound in
+the session variables — so only the default applies; and a section frozen at
+session start does not change when the person edits their profile, so an edit
+reaches a long-running Bot Chat on its next session.
 
 `pre_llm_call` does one more thing, in `session_vars.py`: when Hermes' own
 `HERMES_SESSION_USER_*` variables are empty and this module can say who is
@@ -67,6 +73,16 @@ class ContextModule:
     def fills_session_vars(self) -> bool:
         return self.runtime.config("context.session_vars", True) is not False
 
+    def session_sender(self) -> str:
+        """The login the gateway bound into the session variables, or nothing.
+
+        This is the second source of a sender, used wherever the first one is
+        empty. It is a read, not a write, so `context.session_vars` does not
+        gate it: that switch is about filling the variables in, and a gateway
+        that has asked not to be written to can still be asked who it let in.
+        """
+        return self.session_vars.read(USER_ID)
+
     @property
     def configured_default(self) -> str:
         return str(self.runtime.config("context.default_user", "") or "")
@@ -83,11 +99,25 @@ class ContextModule:
     # -- the frozen section --------------------------------------------------
 
     def render_section(self, session_info: Mapping[str, Any]) -> str:
-        """Called by core once per session, while the prompt is being built."""
+        """Called by core once per session, while the prompt is being built.
+
+        `session_info` names no sender — it carries `session_id`, `model`,
+        `provider`, `platform`, `profile_name` and `cwd`, and core builds it
+        out of the agent alone — so the sender here can only be the session
+        one. That one is reachable: the gateway binds the session variables
+        when it prepares the turn, which is before the prompt is built, and
+        core calls this on that same call path. So a gateway that names the
+        login there gets the right person frozen into the prompt, and the
+        per-turn top-up then has nothing left to add.
+        """
         try:
             bot = str(session_info.get("profile_name") or "") or self.runtime.bot_name()
             section = self.section()
-            user = resolve(section, configured_default=self.configured_default)
+            user = resolve(
+                section,
+                sender_id=self.session_sender(),
+                configured_default=self.configured_default,
+            )
             if user is not None:
                 with self.lock:
                     self.frozen_for[str(session_info.get("session_id") or "")] = user.user_id
@@ -135,7 +165,10 @@ class ContextModule:
     def on_pre_llm_call(self, **kwargs: Any) -> Optional[Dict[str, str]]:
         """Contribute context only for a sender the frozen section does not cover."""
         try:
-            sender_id = str(kwargs.get("sender_id") or "")
+            # The kwarg first, then the login the gateway bound into the
+            # session variables. Both name the same person on a gateway that
+            # fills both; the second is all there is on the dashboard route.
+            sender_id = str(kwargs.get("sender_id") or "") or self.session_sender()
             # One read of the app's metadata per turn at most, shared by the
             # shim and the top-up, and skipped entirely when neither needs it.
             cache: List[ContextSection] = []

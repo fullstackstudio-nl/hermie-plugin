@@ -130,3 +130,68 @@ def test_the_hook_fills_them_on_its_way_past():
 
 def test_the_alternative_id_is_read_from_the_person_the_app_wrote():
     assert read_section(bag({"u1": {"userIdAlt": "alt-1"}})).users["u1"].user_id_alt == "alt-1"
+
+
+# -- the session variable as a sender ----------------------------------------
+#
+# `sender_id` is empty on the dashboard's WebSocket route while the gateway
+# does know the login, because it binds it into the session variables instead.
+
+
+def two_people():
+    return [("", bag({"u1": {"displayName": "Sebas"}, "u2": {"displayName": "Ana"}}))]
+
+
+def test_the_session_variable_names_the_sender_when_the_kwarg_is_empty():
+    hermes = FakeSessionContext(**{USER_ID: "u2"})
+    module = module_for(two_people(), hermes)
+
+    added = module.on_pre_llm_call(session_id="s1", sender_id="")
+    assert "Ana" in added["context"]
+
+
+def test_the_kwarg_still_wins_over_the_session_variable():
+    hermes = FakeSessionContext(**{USER_ID: "u2"})
+    module = module_for(two_people(), hermes)
+
+    added = module.on_pre_llm_call(session_id="s1", sender_id="u1")
+    assert "Sebas" in added["context"]
+
+
+def test_the_frozen_section_names_the_session_user():
+    """The mapping core hands the section carries no identity; this one does."""
+    hermes = FakeSessionContext(**{USER_ID: "u2"})
+    module = module_for(two_people(), hermes)
+
+    assert "Ana" in module.render_section({"session_id": "s1", "profile_name": "jurist"})
+
+
+def test_the_frozen_section_covers_that_sender_so_the_turn_costs_nothing():
+    hermes = FakeSessionContext(**{USER_ID: "u2"})
+    module = module_for(two_people(), hermes)
+
+    module.render_section({"session_id": "s1", "profile_name": "jurist"})
+    assert module.on_pre_llm_call(session_id="s1", sender_id="") is None
+
+
+def test_no_session_variable_leaves_the_old_answer():
+    """An ungated gateway names nobody anywhere, and nothing is injected."""
+    hermes = FakeSessionContext()
+    module = module_for(two_people(), hermes)
+
+    assert module.render_section({"session_id": "s1", "profile_name": "jurist"}) == ""
+    assert module.on_pre_llm_call(session_id="s1", sender_id="") is None
+
+
+def test_reading_the_sender_is_not_gated_by_the_write_switch():
+    """`context.session_vars` switches off filling them in, not asking them."""
+    hermes = FakeSessionContext(**{USER_ID: "u2"})
+    module = module_for(two_people(), hermes, settings={"context.session_vars": False})
+
+    assert "Ana" in module.on_pre_llm_call(session_id="s1", sender_id="")["context"]
+
+
+def test_a_gateway_without_the_session_variables_asks_nobody():
+    module = module_for(two_people(), None)
+
+    assert module.on_pre_llm_call(session_id="s1", sender_id="") is None

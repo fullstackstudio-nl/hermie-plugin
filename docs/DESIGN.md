@@ -66,7 +66,12 @@ value to a queue.
   and persisted by core verbatim. Limits: `after_memory` is the only accepted
   position, 4000 characters per section, 8000 across all plugins, 32 sections.
   The mapping a callable receives carries `session_id`, `model`, `provider`,
-  `platform`, `profile_name`, `cwd` — **and no user identity**.
+  `platform`, `profile_name`, `cwd` — **and no user identity**. Core builds it
+  from the agent object alone (`agent/system_prompt.py::_plugin_session_info`),
+  so there is no field to add one. The section is rendered on the caller's own
+  thread, after the gateway has bound the session variables for the turn, so
+  the *session* user is reachable from inside it even though the mapping never
+  names one.
 - **`ctx.state`** — a per-profile JSON store at
   `$HERMES_HOME/plugin-data/<namespace>/state.json`, atomic, file-locked,
   10 MiB quota, `get`/`set`. This is where the plugin's state lives.
@@ -364,7 +369,8 @@ Two Hermes surfaces can, and they are good at opposite things.
 
 `register_system_prompt_section` is rendered **once** per session and replayed
 verbatim, so it never appears in the transcript as a message and never grows
-with the conversation. What it cannot do is know who is asking.
+with the conversation. What it cannot do is be handed who is asking — though it
+can ask the session variables, which are bound before the prompt is built.
 
 `pre_llm_call` is handed `sender_id` and therefore knows exactly who is asking.
 What it cannot do is be free: whatever it returns is appended to the user's
@@ -378,16 +384,27 @@ per-turn cost is zero.
 
 ### Does the plugin know who sent the prompt?
 
-**Yes, on an authenticated gateway.** `pre_llm_call` receives `sender_id`, which
-is the agent's `_user_id`. On a WebSocket session that is the `auth_user_id`
-stamped on the session record from the transport's login
-(`tui_gateway/server.py::_transport_auth_user_id`). No marker in the message
-text is needed, and none is used.
+**Yes, on an authenticated gateway**, from one of two places.
+
+`pre_llm_call` receives `sender_id`, which is the agent's `_user_id`. On a
+WebSocket session that is the `auth_user_id` stamped on the session record from
+the transport's login (`tui_gateway/server.py::_transport_auth_user_id`). No
+marker in the message text is needed, and none is used.
+
+On the dashboard's own WebSocket route that field is often empty while the
+gateway plainly does know the login, because it carries it in the session
+variables instead: `HERMES_SESSION_USER_ID`, bound when the turn is prepared
+(`tui_gateway/prompt_turn.py::_prepare_turn_input`) and still bound when the
+prompt is built and when `pre_llm_call` fires. So an empty `sender_id` falls
+back to that variable, in the hook **and** in the frozen section — which is the
+only identity the frozen section can reach at all, and the reason the section
+names the right person on that route rather than the default.
 
 Three limits, all real:
 
 1. **An ungated gateway names nobody.** With no auth in front of it there is no
-   `auth_user_id`, so `sender_id` is empty and only the resolved default applies.
+   `auth_user_id` and nothing bound in the session variables either, so both
+   sources are empty and only the resolved default applies.
 2. **`sender_id` is the session's creator, not necessarily this turn's typist.**
    It is stamped when the session is created; a second person attaching to an
    existing session does not change it.
@@ -397,10 +414,15 @@ Three limits, all real:
 
 ### Resolution order
 
-The sender the gateway named → the operator's `context.default_user` → the app's
-own `default` → the only registered person, if there is exactly one. With several
-registered people and no way to tell who is asking, **nothing is injected**:
-showing a bot the wrong person's notes is worse than showing it none.
+The sender the hook was handed → the sender the gateway bound into the session
+variables → the operator's `context.default_user` → the app's own `default` →
+the only registered person, if there is exactly one. With several registered
+people and no way to tell who is asking, **nothing is injected**: showing a bot
+the wrong person's notes is worse than showing it none.
+
+The two sender steps are one question asked twice, and a gateway that answers
+both answers the same thing; the order between them is only which field is
+filled in on which route.
 
 ### Telling Hermes who is asking
 
@@ -411,7 +433,7 @@ is asking — `pre_llm_call` is handed `sender_id`, and the app's metadata names
 the registered person.
 
 So `pre_llm_call` fills in `HERMES_SESSION_USER_ID`, `_ID_ALT` and `_NAME` for
-that call, under `context.session_vars` (on by default). Three rules keep it a
+that call, under `context.session_vars` (on by default). Four rules keep it a
 shim rather than a policy:
 
 1. **Nothing is overwritten.** If `HERMES_SESSION_USER_ID` already holds a
@@ -422,7 +444,12 @@ shim rather than a policy:
    and is used as-is. The display name and the alternative id come from that
    person's own entry, so a sender the app has never seen gets an id and no
    name rather than somebody else's.
-3. **It is written where Hermes keeps it, not in the environment.** The write
+3. **Asking is not filling.** `context.session_vars: false` switches off this
+   write. It does not switch off *reading* `HERMES_SESSION_USER_ID` to find out
+   who is asking — that is the resolution order above, it writes nothing, and
+   an operator who turns the shim off has asked not to be written to rather
+   than asked to be treated as a stranger.
+4. **It is written where Hermes keeps it, not in the environment.** The write
    goes to the same `ContextVar` `get_session_env` reads. Setting a process-wide
    environment variable instead would outlive the turn and reach every other
    session in the gateway, which is the bug the `ContextVar`s replaced.
