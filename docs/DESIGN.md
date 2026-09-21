@@ -44,11 +44,12 @@ value to a queue.
   nothing carries a job id or says "this was a cron". The plugin recognises a
   cron delivery only by the session's `platform` string, which is a heuristic;
   when it misfires the message is notified as a message, which it also is.
-- **No bot-to-bot DM hook.** `tools/bot_mode_dm.py` has no fire site. ADR-0017's
-  `dm` type therefore **cannot be produced by a plugin** and is not advertised.
-  A device that asked for `dm` simply never receives one. This is the one place
-  where the plugin is strictly less capable than the daemon ADR-0017 described,
-  and it is a gap in Hermes, not in the design.
+- **No bot-to-bot message hook.** `tools/bot_mode_dm.py` has no fire site, so
+  one bot writing to another **cannot be produced by a plugin**. ADR-0017 listed
+  it as a notification type; there is no such type here, because a switch that
+  turns nothing on is worse than no switch. This is the one place where the
+  plugin is strictly less capable than the daemon ADR-0017 described, and it is
+  a gap in Hermes, not in the design.
 - **No clarify hook.** `clarify` is an ordinary tool, so it is caught through
   `pre_tool_call`. The clarify request id is minted inside the gateway's
   blocking prompt and is not visible to a plugin, so a clarify notification

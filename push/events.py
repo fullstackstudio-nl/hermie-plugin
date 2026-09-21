@@ -31,9 +31,9 @@ from .registrations import Registration, Section, is_muted, looking_at
 
 PAYLOAD_VERSION = 1
 
-# Everything the app is told about. `dm` is in ADR-0017 and is NOT here: Hermes
-# fires no hook when a bot-to-bot DM arrives (see DESIGN.md), so the plugin does
-# not advertise it rather than advertising a type that never arrives.
+# Everything the app is told about. Hermes fires no hook when a bot-to-bot
+# message arrives (see DESIGN.md), so there is no type for one: a switch that
+# turns nothing on is worse than no switch.
 TYPES = ("message", "request", "cron", "turn_done", "turn_failed")
 
 # Types a device is told about even when it says somebody is watching.

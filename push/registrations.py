@@ -24,10 +24,13 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 SECTION_VERSION = 1
 
-# Every event a device can ask about. The first four are ADR-0017's; the last
-# two are this plugin's additions, and they follow the same rule as the rest —
-# absent means OFF, so a device that predates a type never starts receiving it.
-PUSH_TYPES = ("message", "request", "dm", "cron", "turn_done", "turn_failed")
+# Every event a device can ask about, and every one it can be sent. Absent means
+# OFF, so a device that predates a type never starts receiving it.
+#
+# ADR-0017 also listed a bot-to-bot `dm`. Hermes fires no hook when one arrives,
+# so nothing can produce it — the type is gone rather than kept as a switch that
+# turns nothing on.
+PUSH_TYPES = ("message", "request", "cron", "turn_done", "turn_failed")
 
 # What a person silenced, per bot, as the app writes it:
 #

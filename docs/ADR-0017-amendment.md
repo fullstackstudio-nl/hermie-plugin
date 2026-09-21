@@ -49,12 +49,14 @@ is registered for the plugin. The app needs no change to keep working.
 
 **Two of the four event types cannot be produced by a plugin.**
 
-- **Bot-to-bot DM.** Hermes fires no hook when one arrives (`tools/bot_mode_dm.py`
-  has no fire site). The `dm` type stays in the schema — a device may still ask
-  for it and the daemon may still send it — but the plugin does not advertise it
-  and never sends one. This is a regression against ADR-0017 as written, and it
-  is accepted because the alternative is keeping a second process alive for one
-  event type. Closing it means a hook upstream.
+- **Bot-to-bot messages.** Hermes fires no hook when one arrives
+  (`tools/bot_mode_dm.py` has no fire site), so the plugin cannot produce that
+  event at all. The type is therefore **dropped from the schema** rather than
+  kept as something a device can ask for and never receive: nothing left in the
+  product can send one, and a switch that turns nothing on is worse than no
+  switch. This is a regression against ADR-0017 as written, and it is accepted
+  because the alternative is keeping a second process alive for one event type.
+  Closing it means a hook upstream, and a type coming back.
 - **Cron delivery.** There are no hook fire sites in `hermes_cli/cron.py`. A cron
   run is an ordinary agent session, so the turn hooks fire inside it, but nothing
   carries a job id. The plugin recognises a cron delivery from the session's

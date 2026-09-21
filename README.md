@@ -137,9 +137,10 @@ This plugin replaces it as the default path, and is strictly smaller:
 | Events | by watching a transcript | from the gateway's own hooks |
 | Install | a release artefact, a unit file | one command |
 
-One thing the daemon could do and this cannot: **bot-to-bot DMs**. Hermes fires
-no hook when one arrives, so the plugin does not advertise that type and a device
-that asked for it never receives one. Everything else moved across.
+One thing the daemon could do and this cannot: notify about **one bot writing to
+another**. Hermes fires no hook when that happens, so there is no such
+notification and no switch pretending there could be. Everything else moved
+across.
 
 Run both and you will be notified twice. Pick one.
 

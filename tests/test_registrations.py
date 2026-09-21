@@ -189,3 +189,14 @@ def test_is_muted_reads_zero_as_forever_and_a_past_until_as_over():
     assert is_muted(section, "u1", "marketing", now=1000) is False
     assert is_muted(section, "u1", "sales", now=1000) is False
     assert is_muted(section, "u2", "jurist", now=1000) is False
+
+
+def test_there_is_no_type_for_something_nothing_can_send():
+    """Hermes fires no hook when one bot writes to another."""
+    from hermie_plugin.push import events
+    from hermie_plugin.push.registrations import PUSH_TYPES
+
+    assert "dm" not in PUSH_TYPES
+    assert "dm" not in events.TYPES
+    # A device that still asks for it is simply asking for nothing.
+    assert registration_of("i1", expo_entry(types={"dm": True})).wants("dm") is False
