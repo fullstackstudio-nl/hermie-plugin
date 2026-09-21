@@ -93,4 +93,4 @@ config_schema:
     default: ""
     description: >-
       Which registered user's context to use when the gateway cannot say who
-      sent the prompt. Empty means the most recently active user.
+      sent the prompt. Empty means the default the app set, else the only registered person.
