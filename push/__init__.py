@@ -75,7 +75,11 @@ class PushModule:
         # The mute list is honoured whether or not one exists yet: the string
         # says this gateway will obey a mute, which is what the app needs to
         # know before it offers the switch.
-        found = [contract.CAP_PUSH_EXPO, contract.CAP_PUSH_MUTE]
+        found = [
+            contract.CAP_PUSH_EXPO,
+            contract.CAP_PUSH_MUTE,
+            contract.CAP_PUSH_SEEN_PER_CHAT,
+        ]
         if webpush.available():
             found.append(contract.CAP_PUSH_WEBPUSH)
         if self.gateway_preview == "device":

@@ -111,7 +111,8 @@ hermie-plugin:
   v: 1
   version: 0.1.0
   capabilities: [context.system_prompt, push.expo, push.mute, push.preview,
-                 push.type.turn_done, push.type.turn_failed, push.webpush]
+                 push.seen.per_chat, push.type.turn_done, push.type.turn_failed,
+                 push.webpush, ui_meta.per_user]
   modules: {push: "on", context: "on", presence: planned, ...}
   limits: {payloadBytes: 3500, contextChars: 1200}
   updatedAt: 1790001453
@@ -131,6 +132,13 @@ Four rules make this work in both directions:
 3. **An absent advert means an absent plugin.** A plugin too old to write the
    key, a plugin that is disabled, and no plugin at all are indistinguishable,
    and all three mean: do not offer the feature.
+   Two capabilities exist because of that rule rather than to offer a button:
+   `ui_meta.per_user` says this gateway reads `hermie-app:<user id>`, and
+   `push.seen.per_chat` says it understands a heartbeat that names a chat. An
+   app that moves its bag or changes its heartbeat shape in front of a plugin
+   that predates the move fails **silently** — nobody is notified, or nothing is
+   suppressed — so the app asks first and writes the older shape until the
+   string is there.
 4. **The plugin never writes `hermie-app`.** That key belongs to the app, which
    holds a compare-and-swap revision for it; a write from behind would make the
    app's next write fail. The plugin reads it and publishes under its own key,

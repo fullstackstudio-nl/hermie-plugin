@@ -80,12 +80,21 @@ CONTRACT_VERSION = 1
 # describes what this gateway can do rather than what the code could do
 # somewhere else. That distinction is the whole point: a Web Push capability on
 # a gateway with no signing library is a promise the app would act on.
+#
+# Two of these say which *shape* this gateway understands, and they are here
+# because getting them wrong is silent. An app that moves its bag to
+# `hermie-app:<user id>` in front of a plugin that only reads `hermie-app`
+# notifies nobody, and an app that writes a `{bot, at}` heartbeat to a plugin
+# that only reads a number suppresses nothing. Both are questions the app must
+# be able to ask before it writes, which is what a capability string is for.
 CAP_PUSH_EXPO = "push.expo"
 CAP_PUSH_WEBPUSH = "push.webpush"
 CAP_PUSH_PREVIEW = "push.preview"
 CAP_PUSH_MUTE = "push.mute"
 CAP_PUSH_TURN_DONE = "push.type.turn_done"
 CAP_PUSH_TURN_FAILED = "push.type.turn_failed"
+CAP_PUSH_SEEN_PER_CHAT = "push.seen.per_chat"
+CAP_UIMETA_PER_USER = "ui_meta.per_user"
 CAP_CONTEXT_PROMPT = "context.system_prompt"
 CAP_CONTEXT_PER_BOT = "context.per_bot"
 

@@ -119,6 +119,9 @@ def test_loading_publishes_an_advert_the_app_can_read(tmp_path, monkeypatch):
     caps = contract.read_capabilities(advert)
     assert contract.CAP_PUSH_EXPO in caps
     assert contract.CAP_CONTEXT_PROMPT in caps
+    assert contract.CAP_PUSH_MUTE in caps
+    assert contract.CAP_PUSH_SEEN_PER_CHAT in caps
+    assert contract.CAP_UIMETA_PER_USER in caps
     assert advert["version"] == contract.PLUGIN_VERSION
     assert advert["modules"]["push"] == "on"
     assert advert["modules"]["presence"] == "planned"
@@ -132,7 +135,11 @@ def test_a_switched_off_module_claims_nothing(tmp_path, monkeypatch):
 
     advert = uimeta.read_key(uimeta.PLUGIN_KEY, home)
     assert advert["modules"]["push"] == "off"
-    assert contract.CAP_PUSH_EXPO not in contract.read_capabilities(advert)
+    caps = contract.read_capabilities(advert)
+    assert contract.CAP_PUSH_EXPO not in caps
+    assert contract.CAP_PUSH_MUTE not in caps
+    # Reading the per-user key is the plugin's, not the push module's.
+    assert contract.CAP_UIMETA_PER_USER in caps
     assert "post_llm_call" not in ctx.hooks
 
 

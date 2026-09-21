@@ -142,7 +142,9 @@ def register(ctx: Any) -> None:
     """Hermes calls this once, at load."""
     runtime = Runtime(ctx)
     states = module_states(runtime)
-    capabilities: List[str] = []
+    # Not a module's: this build reads `hermie-app:<user id>` whichever modules
+    # are switched on, and the app has to know that before it moves its bag.
+    capabilities: List[str] = [contract.CAP_UIMETA_PER_USER]
 
     if states.get("push") == "on":
         from . import push as push_module

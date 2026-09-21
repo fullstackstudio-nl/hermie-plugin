@@ -51,3 +51,12 @@ def test_planned_modules_are_advertised_but_not_claimed():
     )
     assert advert["modules"]["presence"] == "planned"
     assert "presence" not in " ".join(advert["capabilities"])
+
+
+def test_the_advert_says_which_shapes_this_gateway_understands():
+    """An app that moves its key in front of an older plugin fails silently."""
+    from hermie_plugin import IMPLEMENTED
+
+    assert contract.CAP_UIMETA_PER_USER == "ui_meta.per_user"
+    assert contract.CAP_PUSH_SEEN_PER_CHAT == "push.seen.per_chat"
+    assert "push" in IMPLEMENTED
