@@ -317,9 +317,19 @@ class ContextModule:
 
         self.remember(session_id, user.user_id if user is not None else frozen.user_id, text, stamp)
         if text:
+            # "It replaces what the prompt says" is only true when the prompt
+            # says something. A section that rendered empty at session start put
+            # no copy in the prompt, so this is the first one rather than a
+            # correction, and claiming otherwise points a model at nothing.
             return {"context": render(
-                user, bot=self.runtime.bot_name(), max_chars=self.max_chars, supersedes=True
+                user,
+                bot=self.runtime.bot_name(),
+                max_chars=self.max_chars,
+                supersedes=bool(frozen.text),
             )}
+        if not frozen.text:
+            # Nothing was frozen and nothing is there now. Nothing to retract.
+            return None
         # They emptied it. The frozen copy cannot be taken back out of the
         # system prompt, so the only honest thing left is to say it is gone.
         return {"context": RETRACTED}

@@ -229,3 +229,24 @@ def test_what_is_remembered_per_session_is_bounded():
     assert len(module.frozen) == FROZEN_SESSIONS
     assert "s0" not in module.frozen
     assert f"s{FROZEN_SESSIONS + 19}" in module.frozen
+
+
+def test_a_first_copy_does_not_claim_to_replace_an_empty_one():
+    """A section that rendered empty put nothing in the prompt to supersede."""
+    module = module_for(one(displayName="", about=""))
+    assert freeze(module) == ""
+
+    module.runtime.edited(one(displayName="Sebas", about="Prefers short answers."))
+
+    added = module.on_pre_llm_call(session_id="s1", sender_id="ef11a9")
+    assert "Sebas" in added["context"]
+    assert not added["context"].startswith(SUPERSEDES)
+
+
+def test_there_is_nothing_to_retract_when_nothing_was_frozen():
+    module = module_for(one(displayName="", about=""))
+    freeze(module)
+
+    module.runtime.edited([("", bag({}))])
+
+    assert module.on_pre_llm_call(session_id="s1", sender_id="ef11a9") is None
