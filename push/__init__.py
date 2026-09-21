@@ -72,7 +72,10 @@ class PushModule:
         an app that sees the capability will offer the browser a subscribe
         button, and a button that cannot work is worse than one that is absent.
         """
-        found = [contract.CAP_PUSH_EXPO]
+        # The mute list is honoured whether or not one exists yet: the string
+        # says this gateway will obey a mute, which is what the app needs to
+        # know before it offers the switch.
+        found = [contract.CAP_PUSH_EXPO, contract.CAP_PUSH_MUTE]
         if webpush.available():
             found.append(contract.CAP_PUSH_WEBPUSH)
         if self.gateway_preview == "device":

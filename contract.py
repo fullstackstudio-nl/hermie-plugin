@@ -46,6 +46,7 @@ CONTRACT_VERSION = 1
 CAP_PUSH_EXPO = "push.expo"
 CAP_PUSH_WEBPUSH = "push.webpush"
 CAP_PUSH_PREVIEW = "push.preview"
+CAP_PUSH_MUTE = "push.mute"
 CAP_PUSH_TURN_DONE = "push.type.turn_done"
 CAP_PUSH_TURN_FAILED = "push.type.turn_failed"
 CAP_CONTEXT_PROMPT = "context.system_prompt"

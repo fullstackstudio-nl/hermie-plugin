@@ -12,6 +12,8 @@ Three rules shape it, all of them from ADR-0017:
 - **A message is suppressed while somebody is looking.** Requests are not. A
   question with a countdown on it is worth a buzz even if the chat is open on a
   tablet in another room.
+- **A muted bot is silent on every device that person owns.** That one is not a
+  heuristic and not per type: somebody said no.
 - **Every notification is a hint, never an instruction.** Nothing in a payload
   is an id the app acts on without re-reading the gateway first.
 """
@@ -23,7 +25,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from .registrations import Registration, Section, someone_attached
+from .registrations import Registration, Section, is_muted, someone_attached
 
 PAYLOAD_VERSION = 1
 
@@ -201,6 +203,11 @@ def recipients(
     out: List[tuple[Registration, bool]] = []
     for registration in section.registrations:
         if not registration.wants(notification.type):
+            continue
+        # A mute is the person's decision about a bot, so it outranks every
+        # per-type switch: it silences this bot on every device that person
+        # registered, including the types that are never suppressed.
+        if is_muted(section, registration.user_id, notification.bot, now):
             continue
         if retired(registration.installation_id, registration.updated_at):
             continue

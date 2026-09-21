@@ -26,6 +26,7 @@ That is the whole install. Hermes clones the repo into
 | **A bot asked a question** | a notification, never suppressed |
 | **A turn finished or failed** | a notification, if the device asked for those |
 | **A cron job delivered** | a notification, recognised by the session's platform |
+| **A bot you muted** | nothing, on any of your devices, until the mute lapses |
 
 By default a notification says **who and what kind** — a bot's name and an event
 type — and nothing about what was said. That is a deliberate default: a

@@ -103,7 +103,7 @@ own **`hermie-plugin`** key:
 hermie-plugin:
   v: 1
   version: 0.1.0
-  capabilities: [context.system_prompt, push.expo, push.preview,
+  capabilities: [context.system_prompt, push.expo, push.mute, push.preview,
                  push.type.turn_done, push.type.turn_failed, push.webpush]
   modules: {push: "on", context: "on", presence: planned, ...}
   limits: {payloadBytes: 3500, contextChars: 1200}
@@ -237,6 +237,40 @@ window (90s by default), after a short delay (5s) that lets an opening app claim
 the chat. `request`, `cron` and `turn_failed` are **never** suppressed. This is
 the heuristic ADR-0017 described and it fails towards a redundant notification
 for a chat somebody is already reading, which is the right direction.
+
+### Mutes
+
+A person can silence a bot. The app writes it into that person's own bag, beside
+`push` and `context`, because a mute is a fact about a person and a bot rather
+than about a transport:
+
+```yaml
+hermie-app:owner:
+  mutes:
+    jurist: 0             # forever
+    marketing: 1790000000 # until this unix second
+```
+
+`0` is forever. An `until` that has already passed is **not** a mute: the app is
+not obliged to come back and tidy up a lapsed entry, and a gateway that read a
+lapsed one as live would go quiet for good. A value that is not a whole
+non-negative number is ignored, which leaves the bot notifying — the recoverable
+direction.
+
+A mute outranks every per-type switch, including the types that are never
+suppressed: `request`, `cron` and `turn_failed` are silent too while it holds.
+Suppression is a guess about whether somebody is already reading; a mute is
+somebody saying no, and the two should not be weighed against each other.
+
+It covers **every device that person registered**, and only that person's — which
+is exactly what the per-user key made knowable, since a registration now carries
+the user id of the key it was read from. A mute in the legacy `hermie-app` bag
+applies to the devices still registered there and to nothing else.
+
+The gateway advertises `push.mute` whether or not a mute exists yet: the string
+says this gateway will obey one, which is what the app needs before it offers
+the switch. A copy of the map under `push.mutes` is read as well, for an app
+that files it with the rest of the push settings; the top-level one wins.
 
 ### Payload
 

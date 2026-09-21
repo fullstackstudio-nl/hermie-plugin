@@ -4,7 +4,7 @@ from hermie_plugin.push import events
 from hermie_plugin.push.registrations import Registration, Section
 
 
-def registration(installation_id="i1", *, preview=False, types=None, transport="expo"):
+def registration(installation_id="i1", *, preview=False, types=None, transport="expo", user_id=""):
     return Registration(
         installation_id=installation_id,
         transport=transport,
@@ -13,6 +13,13 @@ def registration(installation_id="i1", *, preview=False, types=None, transport="
         preview=preview,
         updated_at=1000,
         token="ExponentPushToken[abcdefghijklmnopqrstuv]",
+        user_id=user_id,
+    )
+
+
+def message(bot="b"):
+    return events.from_assistant_message(
+        bot=bot, session_id="s", turn_id="t", assistant_response="hello", at=10
     )
 
 
@@ -148,3 +155,53 @@ def test_an_empty_assistant_message_is_not_a_notification():
         )
         is None
     )
+
+
+# -- mutes -------------------------------------------------------------------
+
+
+def muted(bot="b", until=0, user_id="u1"):
+    return Section(registrations=[registration(user_id=user_id)], mutes={user_id: {bot: until}})
+
+
+def test_an_active_mute_says_nothing():
+    assert deliver(message(), muted(until=2000), now=1000) == []
+
+
+def test_a_mute_forever_is_forever():
+    """`0` is not "expired at the epoch"; it is "until I say otherwise"."""
+    assert deliver(message(), muted(until=0), now=99_999_999) == []
+
+
+def test_an_expired_mute_is_not_a_mute():
+    """The app is not obliged to come back and tidy up a lapsed entry."""
+    assert len(deliver(message(), muted(until=900), now=1000)) == 1
+
+
+def test_a_mute_is_per_bot():
+    section = Section(registrations=[registration(user_id="u1")], mutes={"u1": {"other": 0}})
+    assert len(deliver(message(bot="b"), section, now=1000)) == 1
+
+
+def test_a_mute_silences_a_request_too():
+    """A mute is not a per-type switch; somebody said no to this bot."""
+    note = events.from_approval(
+        bot="b", session_key="s", description="d", request_id="r", turn_id="t", at=10
+    )
+    assert deliver(note, muted(until=0), now=1000) == []
+
+
+def test_one_persons_mute_leaves_another_person_alone():
+    section = Section(
+        registrations=[registration("i1", user_id="u1"), registration("i2", user_id="u2")],
+        mutes={"u1": {"b": 0}},
+    )
+    assert [entry.installation_id for entry, _ in deliver(message(), section, now=1000)] == ["i2"]
+
+
+def test_a_mute_covers_every_device_that_person_registered():
+    section = Section(
+        registrations=[registration("i1", user_id="u1"), registration("i2", user_id="u1")],
+        mutes={"u1": {"b": 0}},
+    )
+    assert deliver(message(), section, now=1000) == []

@@ -2,6 +2,8 @@
 
 from hermie_plugin.push.registrations import (
     Section,
+    is_muted,
+    mutes_of,
     read_section,
     read_sections,
     registration_of,
@@ -110,3 +112,31 @@ def test_the_per_user_key_wins_for_the_same_device():
 def test_a_missing_per_user_key_costs_nothing():
     assert read_sections([]).registrations == []
     assert read_sections([("u1", None), ("u2", {"push": "yes"})]).registrations == []
+
+
+# -- the mute list -----------------------------------------------------------
+
+
+def test_a_mute_list_reads_from_the_top_of_the_bag():
+    section = read_sections([("u1", {"mutes": {"jurist": 0, "marketing": 1790000000}})])
+    assert section.mutes == {"u1": {"jurist": 0, "marketing": 1790000000}}
+
+
+def test_a_mute_list_filed_under_push_is_honoured_too():
+    assert mutes_of({"push": {"mutes": {"jurist": 0}}}) == {"jurist": 0}
+
+
+def test_the_top_level_mute_list_wins_where_they_disagree():
+    assert mutes_of({"mutes": {"jurist": 0}, "push": {"mutes": {"jurist": 5}}}) == {"jurist": 0}
+
+
+def test_a_mute_that_is_not_a_number_is_not_a_mute():
+    assert mutes_of({"mutes": {"jurist": "forever", "marketing": True, "sales": -1}}) == {}
+
+
+def test_is_muted_reads_zero_as_forever_and_a_past_until_as_over():
+    section = Section(mutes={"u1": {"jurist": 0, "marketing": 900}})
+    assert is_muted(section, "u1", "jurist", now=99_999_999) is True
+    assert is_muted(section, "u1", "marketing", now=1000) is False
+    assert is_muted(section, "u1", "sales", now=1000) is False
+    assert is_muted(section, "u2", "jurist", now=1000) is False

@@ -29,6 +29,14 @@ SECTION_VERSION = 1
 # absent means OFF, so a device that predates a type never starts receiving it.
 PUSH_TYPES = ("message", "request", "dm", "cron", "turn_done", "turn_failed")
 
+# What a person silenced, per bot, as the app writes it:
+#
+#     mutes: {"<bot>": <until>}
+#
+# `until` is a unix second and `0` means forever. It sits at the top of the
+# person's bag, beside `push` and `context`, because it is a fact about a person
+# and a bot rather than about a transport.
+
 
 @dataclass(frozen=True)
 class Registration:
@@ -53,6 +61,8 @@ class Registration:
 class Section:
     registrations: List[Registration] = field(default_factory=list)
     seen: Dict[str, int] = field(default_factory=dict)
+    # user id -> bot -> the second at which the mute lapses, 0 meaning never.
+    mutes: Dict[str, Dict[str, int]] = field(default_factory=dict)
 
 
 def _text(value: Any) -> str:
@@ -66,6 +76,48 @@ def _number(value: Any) -> int:
 def _types(value: Any) -> Dict[str, bool]:
     source = value if isinstance(value, dict) else {}
     return {name: source.get(name) is True for name in PUSH_TYPES}
+
+
+def _mutes(value: Any) -> Dict[str, int]:
+    """One person's mute list: bot -> `until`, dropping what is not a number.
+
+    `until` is a unix second, and `0` means forever. A negative or absent value
+    is not a mute: the app is the only writer here, and a mute that cannot be
+    read is a bot that keeps notifying, which is the recoverable direction.
+    """
+    source = value if isinstance(value, dict) else {}
+    return {
+        str(bot): _number(until)
+        for bot, until in source.items()
+        if str(bot) and (isinstance(until, int) and not isinstance(until, bool) and until >= 0)
+    }
+
+
+def mutes_of(app_key_value: Any) -> Dict[str, int]:
+    """The `mutes` map out of one app-owned bag.
+
+    It lives at the top of the bag, beside `push` and `context`, because a mute
+    is a fact about a person and a bot rather than about a transport. A copy
+    under `push` is honoured too, for an app that files it with the rest of the
+    push settings; the top-level one wins where they disagree.
+    """
+    if not isinstance(app_key_value, dict):
+        return {}
+    push = app_key_value.get("push") if isinstance(app_key_value.get("push"), dict) else {}
+    return {**_mutes(push.get("mutes")), **_mutes(app_key_value.get("mutes"))}
+
+
+def is_muted(section: Section, user_id: str, bot: str, now: float) -> bool:
+    """Whether this person has silenced this bot right now.
+
+    `0` is forever. An `until` that has passed is not a mute — the app is not
+    obliged to come back and tidy up an expired entry, and a gateway that
+    treated a lapsed mute as a live one would go quiet for good.
+    """
+    until = section.mutes.get(user_id, {}).get(bot)
+    if until is None:
+        return False
+    return until == 0 or until > now
 
 
 def registration_of(installation_id: str, value: Any, user_id: str = "") -> Optional[Registration]:
@@ -106,9 +158,11 @@ def read_section(app_key_value: Any, user_id: str = "") -> Section:
     """The whole ``push`` section out of one app-owned bag."""
     if not isinstance(app_key_value, dict):
         return Section()
+    mutes = mutes_of(app_key_value)
+    empty = Section(mutes={user_id: mutes} if mutes else {})
     push = app_key_value.get("push")
     if not isinstance(push, dict):
-        return Section()
+        return empty
 
     rows = push.get("registrations") if isinstance(push.get("registrations"), dict) else {}
     registrations = [
@@ -122,7 +176,8 @@ def read_section(app_key_value: Any, user_id: str = "") -> Section:
     raw_seen = push.get("seen") if isinstance(push.get("seen"), dict) else {}
     seen = {str(key): _number(at) for key, at in raw_seen.items() if _number(at) > 0}
 
-    return Section(registrations=registrations, seen=seen)
+    mutes = mutes_of(app_key_value)
+    return Section(registrations=registrations, seen=seen, mutes={user_id: mutes} if mutes else {})
 
 
 def read_sections(items: Iterable[Tuple[str, Any]]) -> Section:
@@ -135,14 +190,17 @@ def read_sections(items: Iterable[Tuple[str, Any]]) -> Section:
     """
     by_installation: Dict[str, Registration] = {}
     seen: Dict[str, int] = {}
+    mutes: Dict[str, Dict[str, int]] = {}
     for user_id, value in items:
         section = read_section(value, user_id)
         for registration in section.registrations:
             by_installation[registration.installation_id] = registration
         seen.update(section.seen)
+        mutes.update(section.mutes)
     return Section(
         registrations=sorted(by_installation.values(), key=lambda entry: entry.installation_id),
         seen=seen,
+        mutes=mutes,
     )
 
 
