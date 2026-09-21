@@ -64,6 +64,7 @@ that cannot work is worse than one that is absent.
 | `context.per_bot` | a per-bot note is rendered for the bot it names |
 | `context.live` | a context edit reaches an **open** chat on its next turn |
 | `command.me` | `/me` was accepted by this gateway |
+| `plugin.update_check` | the advert carries the newest release tag |
 
 An absent list means an absent plugin. A plugin too old to publish one, a
 plugin that is installed but disabled, and no plugin at all are
@@ -111,6 +112,11 @@ plugins:
           # Web Push only. The key is created on first use if this is empty.
           vapid_key_path: ""
           vapid_contact: "mailto:you@example.com"
+        update:
+          # Ask this repository, at most once an hour, whether a newer release
+          # exists, and put the answer in the advert. Off by default; the advert
+          # carries the version and the installed commit either way.
+          check: false
         context:
           max_chars: 1200
           # Whose context to use when the gateway cannot say who is asking.
@@ -240,6 +246,47 @@ python -m pytest --rootdir=tests tests
 The repo root is the plugin package — Hermes imports the directory — so `tests/`
 builds the same package rather than inventing an import path production never
 uses, and the run is rooted below the root's `__init__.py`.
+
+## Updating
+
+```
+hermes plugins update hermie
+hermes gateway restart
+```
+
+That is the whole update. It git-pulls the tree Hermes cloned, so nothing about
+the install changes and **nothing is lost**: push registrations live in the
+app's own metadata rather than in the plugin, and the plugin's small state file
+(sent-event ids and retired devices) carries a version and is migrated forward
+rather than replaced. A state file from a version older than this build is
+migrated; one from a version this build has never heard of is left on disk
+untouched and treated as empty for the run — losing dedupe history costs one
+duplicate notification, while overwriting a newer file costs a downgrade its
+data.
+
+The advert tells the app when that command is worth running. It carries this
+build's `version`, the commit the installed tree sits at, the repository it came
+from, and the oldest app version this build can serve — enough for the app to
+work out that a newer release exists, from the phone, on its own network.
+
+If you would rather the gateway found out itself:
+
+```yaml
+plugins:
+  entries:
+    hermie:
+      settings:
+        update:
+          check: true
+```
+
+One GET of this repository's public releases URL, at most once an hour and
+cached across restarts, nothing identifying sent, and every failure treated as
+"no newer release". It is off by default because a gateway that reaches out
+without being asked is not what this plugin is.
+
+There is no self-update and there will not be one. A plugin that can rewrite its
+own code is a plugin that can rewrite its own code.
 
 ## Licence
 

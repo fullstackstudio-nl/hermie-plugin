@@ -219,19 +219,66 @@ yet", and the config surface does not change shape when one lands.
 
 ### Upgrades
 
-`hermes plugins update <name>` exists and git-pulls the installed tree, so the
-manual path is one command. There is no plugin-driven self-update: a plugin
-cannot run `hermes plugins install` for itself without shelling out as the
-gateway user, and a plugin that can rewrite its own code is a plugin that can
-rewrite its own code. The app shows "a plugin update is available" by comparing
-the advert's `version` against what it knows, and shows the command.
+`hermes plugins update hermie` exists and git-pulls the installed tree, so the
+path is one command:
+
+```
+hermes plugins update hermie
+hermes gateway restart
+```
+
+There is no plugin-driven self-update, and there will not be: a plugin cannot
+run `hermes plugins install` for itself without shelling out as the gateway
+user, and a plugin that can rewrite its own code is a plugin that can rewrite
+its own code. What the plugin does instead is make the advert enough to decide
+with.
+
+| Field | Says |
+|---|---|
+| `version` | this build's release version |
+| `maxContract` | the newest advert shape this build can write (equal to `v` today) |
+| `minAppVersion` | the oldest app this build can serve |
+| `source.repo` | which repository an update comes from |
+| `source.ref` | the commit the installed tree sits at |
+| `source.latest` | the newest release tag — **only** when the check is switched on |
+
+`minAppVersion` is the one version comparison in this contract and it runs the
+other way from §2's rule. The app must never test the plugin's version, because
+a plugin older than the string it wants simply does not publish it. A plugin
+naming a floor is different: it is the only way to tell somebody on a very old
+app why nothing works — accepting that an app too old to read the field was
+never going to be told anything anyway.
+
+`source.ref` is read from `.git/HEAD` and the ref it names, with no subprocess
+and no network, because `hermes plugins install` clones the repo and so the
+installed tree is a checkout. Loose refs, packed refs and the detached HEAD that
+`--ref <sha>` leaves behind all answer.
+
+**Asking the repository what the newest release is, is off by default.** The
+advert already carries the version and the commit, so an app can work out that
+an update exists on its own network, and a gateway that makes an unprompted
+outbound request is a surprise on a product whose pitch is that it has no relay,
+no account and no credential. `update.check: true` switches it on: one GET of a
+public URL, at most once an hour (cached in the state file, so hourly means
+hourly across restarts), nothing identifying sent, and every failure — including
+no outbound route at all — is cached as "no newer release" rather than retried
+on every load. The capability `plugin.update_check` is advertised only when an
+answer actually came back.
+
+There is no HTTP route for this. Hermes can mount one for a plugin, on the
+dashboard server, and §1 says why this plugin does not use it; a version string
+the advert already carries is not a reason to open an address.
 
 What an upgrade must never cost is state. `state.py` carries a version and a
 migration table; a state file from a version this build does not know is **left
 on disk untouched** and treated as empty for the run, because losing dedupe
 history costs one duplicate notification while overwriting a newer file costs a
-downgrade its data. Registrations are not the plugin's state at all — they live
-in the app's `ui_meta` and survive any plugin change, including removal.
+downgrade its data. Version 2 added the update-check cache, and the test that
+matters for it is not that the new key appeared but that `sent` and `retired`
+came through unchanged — a lost retirement talks to a dead device again, and a
+lost claim buzzes somebody twice about a message they already read.
+Registrations are not the plugin's state at all — they live in the app's
+`ui_meta` and survive any plugin change, including removal.
 
 ---
 

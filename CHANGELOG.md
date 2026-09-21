@@ -8,6 +8,20 @@ people.
 
 ### Added
 
+- `plugin.update_check`, and an advert that says which build is installed —
+  `version`, `maxContract`, `minAppVersion`, and a `source` naming the
+  repository and the commit the installed tree sits at (read from `.git`, no
+  subprocess, no network). That is enough for the app to say "a plugin update is
+  available" without the gateway reaching anywhere. A gateway-side check of the
+  newest release tag exists behind `update.check: true` — one GET, cached an
+  hour across restarts, nothing identifying sent — and is off by default.
+
+### Changed
+
+- State is version 2, adding the update-check cache. `sent` and `retired` come
+  through a migration unchanged; a state file from an unknown future version is
+  still left on disk untouched.
+
 - `push.type.cron_done`, `push.type.cron_failed` and `push.cron.signal` — a cron
   run is now recognised by the scheduler's own marker (the `cron:<job id>:…`
   task id, then `HERMES_CRON_SESSION`, then the `cron_<job id>_<stamp>` session

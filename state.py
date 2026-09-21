@@ -14,6 +14,14 @@ redundant notification" direction:
   two hooks describe it.
 - ``retired``: registrations Expo told us are dead, kept until the app rewrites
   that installation's entry.
+- ``update``: the newest release tag last seen, and when it was asked for, so an
+  hourly check is hourly across restarts rather than per load.
+
+Nothing here is a registration and nothing here is a credential. Registrations
+live in the app's own ``ui_meta`` and survive any plugin change, including
+removal; the one secret this plugin holds is the VAPID key beside this file,
+which it minted itself. So a migration that went wrong could cost a duplicate
+notification and never an account.
 """
 
 from __future__ import annotations
@@ -28,7 +36,7 @@ from typing import Any, Callable, Dict, Tuple
 
 logger = logging.getLogger(__name__)
 
-STATE_VERSION = 1
+STATE_VERSION = 2
 
 # How long a dedupe key is worth keeping. Long enough that a retry storm cannot
 # walk past it, short enough that the file does not grow without bound.
@@ -36,13 +44,29 @@ DEDUPE_TTL_SECONDS = 24 * 60 * 60
 
 
 def _empty() -> Dict[str, Any]:
-    return {"v": STATE_VERSION, "sent": {}, "retired": {}}
+    return {"v": STATE_VERSION, "sent": {}, "retired": {}, "update": {}}
+
+
+def _v1_to_v2(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Version 2 added the update-check cache.
+
+    Everything a version 1 file holds is carried across untouched. A migration
+    that adds a key is the easy shape and this one is deliberately the whole
+    thing: the test that matters is not that ``update`` appeared, it is that
+    ``sent`` and ``retired`` came through unchanged, because a lost ``retired``
+    entry means talking to a dead device again and a lost ``sent`` entry means
+    somebody's phone buzzes twice about a message they already read.
+    """
+    data.setdefault("update", {})
+    return data
 
 
 # version -> (next version, migrate). A migration takes the whole state dict and
 # returns the whole state dict; it never raises, because a failed migration on a
 # gateway nobody is watching must not stop the plugin from loading.
-MIGRATIONS: Dict[int, Tuple[int, Callable[[Dict[str, Any]], Dict[str, Any]]]] = {}
+MIGRATIONS: Dict[int, Tuple[int, Callable[[Dict[str, Any]], Dict[str, Any]]]] = {
+    1: (2, _v1_to_v2),
+}
 
 
 def migrate(data: Dict[str, Any]) -> Dict[str, Any]:
@@ -71,7 +95,7 @@ def migrate(data: Dict[str, Any]) -> Dict[str, Any]:
             logger.warning("hermie: state migration to version %d failed (%s); starting from empty", version, exc)
             return _empty()
         data["v"] = version
-    for key in ("sent", "retired"):
+    for key in ("sent", "retired", "update"):
         if not isinstance(data.get(key), dict):
             data[key] = {}
     return data

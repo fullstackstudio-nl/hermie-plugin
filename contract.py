@@ -68,12 +68,31 @@ import time
 from typing import Any, Dict, Iterable, List
 
 # The plugin's own release version. Also in plugin.yaml; a test keeps them equal.
-PLUGIN_VERSION = "0.3.0"
+PLUGIN_VERSION = "0.4.0"
+
+# Where an update comes from, named here so the advert and the update check
+# cannot disagree about which repository this plugin is.
+REPO = "fullstackstudio-nl/hermie-plugin"
 
 # The shape of the `hermie-plugin` ui_meta key. Bumped only when an existing
 # field changes meaning — adding a field does not bump it, because a reader that
 # does not know a field ignores it.
 CONTRACT_VERSION = 1
+
+# The highest shape this build could write if an app asked for one. Equal to
+# CONTRACT_VERSION today and published anyway, so the field has a settled
+# meaning on the day they diverge: `v` is the shape of THIS advert, `maxContract`
+# is the newest shape this plugin knows how to speak.
+MAX_CONTRACT = CONTRACT_VERSION
+
+# The oldest Hermie app this plugin can serve. This is the one version
+# comparison in the contract, and it runs the other way from the rule above: the
+# APP must never test the plugin's version, because a plugin older than the
+# string it is looking for simply does not publish it. A plugin naming a floor
+# is different — it is the only way to tell somebody running a three-year-old
+# build why nothing works, and an app too old to read this field was never going
+# to be told anything anyway.
+MIN_APP_VERSION = "1.0.0"
 
 # Every capability this build can offer. A module contributes its own subset
 # once it is enabled AND its prerequisites are actually present, so the advert
@@ -110,6 +129,10 @@ CAP_CONTEXT_PER_BOT = "context.per_bot"
 # which is a sentence no app should have to write, and the wrong answer besides.
 CAP_CONTEXT_LIVE = "context.live"
 CAP_COMMAND_ME = "command.me"
+# The gateway was asked to find out whether a newer plugin exists, and the
+# advert carries the answer. Advertised only when the operator switched the
+# check on: the string says an answer is there, not that one could be.
+CAP_UPDATE_CHECK = "plugin.update_check"
 
 # Modules that exist as a name and a config key but have no implementation yet.
 # They are advertised as "planned" rather than silently missing so the app can
@@ -124,11 +147,26 @@ def advert(
     capabilities: Iterable[str],
     limits: Dict[str, Any] | None = None,
     now: float | None = None,
+    installed_ref: str = "",
+    latest: str = "",
 ) -> Dict[str, Any]:
-    """The value written to the ``hermie-plugin`` ui_meta key."""
+    """The value written to the ``hermie-plugin`` ui_meta key.
+
+    `source` is how the app says "a plugin update is available" without the
+    gateway reaching anywhere: it carries this build's version and the commit
+    the installed tree sits at, and comparing that against the newest release is
+    something the app can do on its own network. `latest` is filled in only when
+    the operator switched the gateway-side check on.
+    """
+    source: Dict[str, Any] = {"repo": REPO, "ref": installed_ref}
+    if latest:
+        source["latest"] = latest
     return {
         "v": CONTRACT_VERSION,
         "version": PLUGIN_VERSION,
+        "maxContract": MAX_CONTRACT,
+        "minAppVersion": MIN_APP_VERSION,
+        "source": source,
         "capabilities": sorted(set(capabilities)),
         "modules": dict(sorted(modules.items())),
         "limits": dict(limits or {}),

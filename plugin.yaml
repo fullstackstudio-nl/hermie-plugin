@@ -5,7 +5,7 @@
 # `hermie-plugin`. Changing it renames both, so it does not change.
 name: hermie
 manifest_version: 1
-version: 0.3.0
+version: 0.4.0
 description: >-
   Hermie's gateway-side companion: push notifications for bot messages, approval
   and clarify requests, and cron deliveries, plus per-device context injected
@@ -91,6 +91,15 @@ config_schema:
     description: >-
       Fill in Hermes' own HERMES_SESSION_USER_ID, _ID_ALT and _NAME for a turn
       when they are empty and the plugin can say who is asking.
+  update.check:
+    type: bool
+    default: false
+    description: >-
+      Ask this plugin's own repository, at most once an hour, whether a newer
+      release exists, and put the answer in the advert. Off by default: the
+      advert already carries this build's version and installed commit, which
+      is enough for the app to work that out on its own network. Nothing
+      identifying is sent either way.
   context.default_user:
     type: str
     default: ""

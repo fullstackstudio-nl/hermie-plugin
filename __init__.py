@@ -19,7 +19,7 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from . import contract, uimeta
+from . import contract, uimeta, update
 from .state import State
 
 logger = logging.getLogger(__name__)
@@ -125,7 +125,36 @@ def module_states(runtime: Runtime) -> Dict[str, str]:
     return states
 
 
-def publish(runtime: Runtime, states: Dict[str, str], capabilities: List[str]) -> Optional[int]:
+def update_fields(runtime: Runtime) -> Tuple[str, str]:
+    """What the advert says about this build, and about a newer one.
+
+    The installed ref is always read: it is two small file reads on the local
+    machine and it is what lets an app work out whether an update exists without
+    the gateway reaching anywhere. The newest release is asked for only when the
+    operator said so, because an unprompted outbound request from somebody's
+    gateway is a surprise on a product that advertises having no relay and no
+    account. See `update.py`.
+    """
+    try:
+        ref = update.installed_ref(Path(__file__).resolve().parent)
+    except Exception:
+        ref = ""
+    if runtime.config("update.check", False) is not True:
+        return ref, ""
+    try:
+        return ref, str(update.check(runtime.state).get("latest") or "")
+    except Exception as exc:
+        logger.warning("hermie: could not check for a newer plugin: %s", exc)
+        return ref, ""
+
+
+def publish(
+    runtime: Runtime,
+    states: Dict[str, str],
+    capabilities: List[str],
+    installed_ref: str = "",
+    latest: str = "",
+) -> Optional[int]:
     """Tell the app what this gateway can do.
 
     Written under the plugin's own `hermie-plugin` key, never under `hermie-app`:
@@ -140,6 +169,8 @@ def publish(runtime: Runtime, states: Dict[str, str], capabilities: List[str]) -
             modules=states,
             capabilities=capabilities,
             limits={"payloadBytes": 3500, "contextChars": int(runtime.config("context.max_chars", 1200) or 1200)},
+            installed_ref=installed_ref,
+            latest=latest,
         )
         uimeta.write_key(uimeta.PLUGIN_KEY, value, runtime.home)
         return int(value["updatedAt"])
@@ -165,7 +196,11 @@ def register(ctx: Any) -> None:
 
         capabilities.extend(context_module.register(ctx, runtime).capabilities())
 
-    stamp = publish(runtime, states, capabilities)
+    installed_ref, latest = update_fields(runtime)
+    if latest:
+        capabilities.append(contract.CAP_UPDATE_CHECK)
+
+    stamp = publish(runtime, states, capabilities, installed_ref, latest)
 
     # An advert that outlives the plugin is a lie the app would act on, so the
     # key is removed on unload. A gateway that is killed rather than unloaded
