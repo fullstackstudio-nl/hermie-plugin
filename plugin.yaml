@@ -4,7 +4,7 @@
 # `plugins.entries.hermie.settings.*`, and every ui_meta key it writes is
 # `hermie-plugin`. Changing it renames both, so it does not change.
 name: hermie
-manifest_version: 2
+manifest_version: 1
 version: 0.1.0
 description: >-
   Hermie's gateway-side companion: push notifications for bot messages, approval
