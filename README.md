@@ -3,7 +3,7 @@
 Hermie's gateway-side companion. It runs inside `hermes serve` as a Hermes
 plugin and does two things today: it sends **push notifications** to the devices
 that registered themselves, and it puts a little **context about the person and
-their device** into a bot's system prompt.
+their device** into a bot's system prompt. `/me` says who it thinks you are.
 
 It has no inbound port, no relay, no account, and no credential of its own. The
 devices that want notifications write themselves into the gateway's own profile
@@ -108,10 +108,38 @@ device model and OS, app version, timezone and locale, and optional per-bot
 notes. The plugin puts that in the bot's system prompt once per session, so it
 does not appear in the transcript and does not grow with the conversation.
 
-On a gateway with authentication in front of it the plugin knows **which**
-person sent a turn and picks their context. On a gateway with no authentication
-there is no user identity to read, so it uses the default — which is the right
-answer when one person is registered, and no answer at all when several are.
+On a gateway with authentication in front of it the plugin works out **which**
+person sent a turn and picks their context. It asks three places in order: the
+sender Hermes hands the hook, the login bound into the session variables, and —
+because the dashboard route fills in neither while knowing perfectly well who
+logged in — the gateway's own record of this live session. A login carries the
+provider that issued it (`oidc:max`), the app registers the bare id (`max`), and
+either spelling finds the other.
+
+On a gateway with no authentication there is no identity to read anywhere, so it
+uses the default — which is the right answer when one person is registered, and
+no answer at all when several are.
+
+### `/me`
+
+Type `/me` in a session to see what the bot actually resolved. It answers on the
+spot, without calling the model:
+
+```
+Hermie context for jurist
+
+Talking to: Sebas
+Worked out: from the login the gateway admitted this session under
+Login:      self-hosted:ef11a9 → matched the registered id ef11a9
+Device:     iPhone 17 Pro running iOS 27, app 1.4.0
+Dates:      Europe/Amsterdam, nl-NL
+About:      Runs FullStack Studio. Prefers short answers.
+This bot:   Always cite the article number.
+From:       hermie-app:ef11a9, updated 2026-09-21 02:19 UTC
+```
+
+When it says `nobody` it also says why, and what to do about it: accept the
+sharing notice in Hermie's Settings → Context, then send a message.
 
 > **On a shared gateway, read this.** The app keeps one metadata key per person,
 > but Hermes' profile metadata is per profile: every key on it is handed to every

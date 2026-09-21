@@ -46,6 +46,20 @@ SECTION_VERSION = 1
 # is the provider and the second really is not.
 PROVIDER_PREFIX = re.compile(r"^([A-Za-z][A-Za-z0-9._-]*):(?!//)(.+)$")
 
+# Every rung of the resolution order, named once. The first three are where a
+# sender can come from and belong to the module that asks; the rest are what
+# `resolve` falls back to. They are here together because `/me` answers with
+# them and a person reading that answer should be reading one vocabulary.
+BY_HOOK = "hook sender"
+BY_SESSION_VARS = "session variables"
+BY_LIVE_SESSION = "live session record"
+BY_CONFIGURED = "configured default"
+BY_APP_DEFAULT = "app default"
+BY_ONLY_USER = "only registered person"
+BY_NOBODY = "nobody"
+
+SENDER_RUNGS = (BY_HOOK, BY_SESSION_VARS, BY_LIVE_SESSION)
+
 # Per-field caps, applied before the whole-section cap, so one long field cannot
 # crowd out the short ones that identify the person.
 LIMITS = {
@@ -82,6 +96,10 @@ class UserContext:
 class ContextSection:
     users: Dict[str, UserContext] = field(default_factory=dict)
     default_user: str = ""
+    # user id -> whose ui_meta key that entry was read out of (`""` for the
+    # legacy shared bag). Only `read_sections` can know this, and only `/me`
+    # asks; resolution never looks at it.
+    origins: Dict[str, str] = field(default_factory=dict)
 
 
 def split_provider(user_id: str) -> Tuple[str, str]:
@@ -179,11 +197,13 @@ def read_sections(items: Iterable[Tuple[str, Any]]) -> ContextSection:
     """
     users: Dict[str, UserContext] = {}
     owned: Dict[str, UserContext] = {}
+    origins: Dict[str, str] = {}
     legacy_default = ""
     defaults = set()
     for user_id, value in items:
         section = read_section(value)
         users.update(section.users)
+        origins.update({found: user_id for found in section.users})
         if user_id and user_id in section.users:
             owned[user_id] = section.users[user_id]
         if section.default_user:
@@ -192,8 +212,9 @@ def read_sections(items: Iterable[Tuple[str, Any]]) -> ContextSection:
             else:
                 legacy_default = section.default_user
     users.update(owned)
+    origins.update({found: found for found in owned})
     default_user = legacy_default or (next(iter(defaults)) if len(defaults) == 1 else "")
-    return ContextSection(users=users, default_user=default_user)
+    return ContextSection(users=users, default_user=default_user, origins=origins)
 
 
 def match_sender(section: ContextSection, sender_id: str) -> Optional[UserContext]:
@@ -215,6 +236,22 @@ def match_sender(section: ContextSection, sender_id: str) -> Optional[UserContex
     return found[0] if len(found) == 1 else None
 
 
+def resolve_with_reason(
+    section: ContextSection, *, sender_id: str = "", configured_default: str = ""
+) -> Tuple[Optional[UserContext], str]:
+    """`resolve`, and which rung answered — the one `/me` has to report."""
+    sender = match_sender(section, sender_id)
+    if sender is not None:
+        return sender, BY_HOOK
+    if configured_default and configured_default in section.users:
+        return section.users[configured_default], BY_CONFIGURED
+    if section.default_user and section.default_user in section.users:
+        return section.users[section.default_user], BY_APP_DEFAULT
+    if len(section.users) == 1:
+        return next(iter(section.users.values())), BY_ONLY_USER
+    return None, BY_NOBODY
+
+
 def resolve(section: ContextSection, *, sender_id: str = "", configured_default: str = "") -> Optional[UserContext]:
     """Whose context to use.
 
@@ -227,16 +264,9 @@ def resolve(section: ContextSection, *, sender_id: str = "", configured_default:
     The sender is matched by `match_sender`, so a login that carries its
     provider finds the person the app registered bare, and the other way round.
     """
-    sender = match_sender(section, sender_id)
-    if sender is not None:
-        return sender
-    if configured_default and configured_default in section.users:
-        return section.users[configured_default]
-    if section.default_user and section.default_user in section.users:
-        return section.users[section.default_user]
-    if len(section.users) == 1:
-        return next(iter(section.users.values()))
-    return None
+    return resolve_with_reason(
+        section, sender_id=sender_id, configured_default=configured_default
+    )[0]
 
 
 def render(user: Optional[UserContext], *, bot: str = "", max_chars: int = 1200) -> str:

@@ -118,10 +118,10 @@ own **`hermie-plugin`** key:
 ```yaml
 hermie-plugin:
   v: 1
-  version: 0.2.0
-  capabilities: [context.system_prompt, push.expo, push.mute, push.preview,
-                 push.seen.per_chat, push.type.turn_done, push.type.turn_failed,
-                 push.webpush, ui_meta.per_user]
+  version: 0.3.0
+  capabilities: [command.me, context.system_prompt, push.expo, push.mute,
+                 push.preview, push.seen.per_chat, push.type.turn_done,
+                 push.type.turn_failed, push.webpush, ui_meta.per_user]
   modules: {push: "on", context: "on", presence: planned, ...}
   limits: {payloadBytes: 3500, contextChars: 1200}
   updatedAt: 1790001453
@@ -537,6 +537,32 @@ reaches the turn. With `plugins.hook_callback_timeout: 0` the callback runs on
 the caller's own thread and the write lands where the rest of the turn reads it.
 The shim is built to be harmless either way — every gate above it is free, and
 the metadata read happens only once the variables are known to be empty.
+
+### `/me`
+
+The context module's whole job is to be invisible, which makes it a bad thing
+to debug by reading a prompt. `/me` answers the question directly, in the
+session, without a model call: there is nothing a model could add, and somebody
+checking whether their identity reached the gateway should not pay for a turn
+to find out.
+
+It resolves exactly what a turn resolves and reports it: the person, **which
+rung answered** (the hook's sender, the session variables, the live session
+record, the configured default, the app's own, the only registered person, or
+nobody), the login id and the registered id it matched, the device line,
+timezone and locale, the "about" text, this bot's own note, and which of the
+app's ui_meta keys the entry came from with when it was written.
+
+When the answer is nobody it says why — nobody registered, a sender that
+matches nobody, or several people and no way to tell — and gives the one action
+that fixes it: accept the sharing notice in Hermie's Settings → Context, then
+send a message.
+
+Two rules, both the same rules as everything else here: it names ids and
+nothing else (no token, key, endpoint or configuration value goes near it), and
+the answer is bounded. The capability `command.me` is advertised only when
+Hermes actually took the registration — core answers `None` when the name is
+already taken, and a capability names what is there, not what shipped.
 
 ### Bounding
 

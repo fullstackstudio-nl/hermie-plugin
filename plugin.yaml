@@ -5,12 +5,13 @@
 # `hermie-plugin`. Changing it renames both, so it does not change.
 name: hermie
 manifest_version: 1
-version: 0.2.0
+version: 0.3.0
 description: >-
   Hermie's gateway-side companion: push notifications for bot messages, approval
   and clarify requests, and cron deliveries, plus per-device context injected
-  into a bot's system prompt. Registrations and settings live in the gateway's
-  own profile ui_meta; nothing is sent to a third-party relay.
+  into a bot's system prompt, and a `/me` command that says who the gateway
+  thinks it is talking to. Registrations and settings live in the gateway's own
+  profile ui_meta; nothing is sent to a third-party relay.
 author: FullStack Studio
 license: MIT
 homepage: https://github.com/fullstackstudio-nl/hermie-plugin

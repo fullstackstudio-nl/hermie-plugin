@@ -68,7 +68,7 @@ import time
 from typing import Any, Dict, Iterable, List
 
 # The plugin's own release version. Also in plugin.yaml; a test keeps them equal.
-PLUGIN_VERSION = "0.2.0"
+PLUGIN_VERSION = "0.3.0"
 
 # The shape of the `hermie-plugin` ui_meta key. Bumped only when an existing
 # field changes meaning — adding a field does not bump it, because a reader that
@@ -97,6 +97,7 @@ CAP_PUSH_SEEN_PER_CHAT = "push.seen.per_chat"
 CAP_UIMETA_PER_USER = "ui_meta.per_user"
 CAP_CONTEXT_PROMPT = "context.system_prompt"
 CAP_CONTEXT_PER_BOT = "context.per_bot"
+CAP_COMMAND_ME = "command.me"
 
 # Modules that exist as a name and a config key but have no implementation yet.
 # They are advertised as "planned" rather than silently missing so the app can

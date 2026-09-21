@@ -34,6 +34,7 @@ class FakeCtx:
     def __init__(self, home: Path, settings=None, profile="jurist"):
         self.hooks = {}
         self.sections = {}
+        self.commands = {}
         self.unloads = []
         self.profile_name = profile
         self.state = FakeState(home / "plugin-data")
@@ -50,11 +51,22 @@ class FakeCtx:
         assert max_chars <= 4000, "core caps a section at 4000 characters"
         self.sections[section_id] = content
 
+    def register_command(self, name, handler, description="", args_hint="", argument_mode=None):
+        # Core answers None rather than raising when the name is taken, and the
+        # plugin advertises the command only when it gets a handle back.
+        if name in self.commands:
+            return None
+        self.commands[name] = handler
+        return object()
+
     def on_unload(self, callback):
         self.unloads.append(callback)
 
     def fire(self, name, **kwargs):
         return [callback(**kwargs) for callback in self.hooks.get(name, [])]
+
+
+_register_command = FakeCtx.register_command
 
 
 def gateway(tmp_path, *, app_meta=None, per_user=None, settings=None, profile="jurist"):
@@ -125,6 +137,47 @@ def test_loading_publishes_an_advert_the_app_can_read(tmp_path, monkeypatch):
     assert advert["version"] == contract.PLUGIN_VERSION
     assert advert["modules"]["push"] == "on"
     assert advert["modules"]["presence"] == "planned"
+
+
+def test_loading_registers_the_me_command_and_advertises_it(tmp_path, monkeypatch):
+    home, ctx = gateway(tmp_path, app_meta=app_meta_with())
+    monkeypatch.setattr(uimeta, "hermes_home", lambda: home)
+
+    hermie_plugin.register(ctx)
+
+    assert "me" in ctx.commands
+    assert contract.CAP_COMMAND_ME in contract.read_capabilities(uimeta.read_key(uimeta.PLUGIN_KEY, home))
+    # It answers here and now, without a model and without a session.
+    assert "Hermie context" in ctx.commands["me"]("")
+
+
+def test_a_command_hermes_would_not_take_is_never_advertised(tmp_path, monkeypatch):
+    """A capability names something that is actually there, not something that
+    shipped. Core answers None when the name is taken; so does the fake."""
+    home, ctx = gateway(tmp_path, app_meta=app_meta_with())
+    monkeypatch.setattr(uimeta, "hermes_home", lambda: home)
+    ctx.commands["me"] = lambda raw_args: "somebody else's"
+
+    hermie_plugin.register(ctx)
+
+    assert contract.CAP_COMMAND_ME not in contract.read_capabilities(
+        uimeta.read_key(uimeta.PLUGIN_KEY, home)
+    )
+
+
+def test_a_gateway_too_old_for_commands_still_loads(tmp_path, monkeypatch):
+    home, ctx = gateway(tmp_path, app_meta=app_meta_with())
+    monkeypatch.setattr(uimeta, "hermes_home", lambda: home)
+    del ctx.__class__.register_command
+
+    try:
+        hermie_plugin.register(ctx)
+    finally:
+        ctx.__class__.register_command = _register_command
+
+    caps = contract.read_capabilities(uimeta.read_key(uimeta.PLUGIN_KEY, home))
+    assert contract.CAP_COMMAND_ME not in caps
+    assert contract.CAP_CONTEXT_PROMPT in caps
 
 
 def test_a_switched_off_module_claims_nothing(tmp_path, monkeypatch):

@@ -45,10 +45,20 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import Any, Callable, Dict, List, Mapping, Optional
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 from .. import contract
-from .render import ContextSection, read_sections, render, resolve, same_user
+from .render import (
+    BY_HOOK,
+    BY_LIVE_SESSION,
+    BY_SESSION_VARS,
+    ContextSection,
+    read_sections,
+    render,
+    resolve,
+    same_user,
+)
+from . import me as me_command
 from .live_session import LiveSessions
 from .session_vars import (
     SESSION_NAMES,
@@ -79,6 +89,9 @@ class ContextModule:
         # Used to answer "is this sender the one the section already covers?".
         self.frozen_for: Dict[str, str] = {}
         self.lock = threading.Lock()
+        # Set at registration: a capability is advertised once the thing it
+        # names is actually there, never because the code for it shipped.
+        self.command_registered = False
 
     @property
     def max_chars(self) -> int:
@@ -112,15 +125,27 @@ class ContextModule:
             session_id, *(self.session_vars.read(name) for name in SESSION_NAMES)
         )
 
-    def sender(self, named: str = "", session_id: str = "") -> str:
-        """Who is asking: the sender we were handed, then the two we can ask for.
+    def sender_with_source(self, named: str = "", session_id: str = "") -> Tuple[str, str]:
+        """Who is asking, and which of the three rungs answered.
 
         This is the first half of the resolution order; `resolve` in
         `render.py` carries the rest (the configured default, the app's own,
         and the only registered person). Each rung costs more than the one
         above it and none of them is reached while a cheaper one answers.
         """
-        return named or self.session_sender() or self.live_sender(session_id)
+        if named:
+            return named, BY_HOOK
+        found = self.session_sender()
+        if found:
+            return found, BY_SESSION_VARS
+        found = self.live_sender(session_id)
+        if found:
+            return found, BY_LIVE_SESSION
+        return "", ""
+
+    def sender(self, named: str = "", session_id: str = "") -> str:
+        """Who is asking, by the same order, when the rung does not matter."""
+        return self.sender_with_source(named, session_id)[0]
 
     @property
     def configured_default(self) -> str:
@@ -133,7 +158,15 @@ class ContextModule:
         found = [contract.CAP_CONTEXT_PROMPT]
         if any(user.per_bot for user in self.section().users.values()):
             found.append(contract.CAP_CONTEXT_PER_BOT)
+        if self.command_registered:
+            found.append(contract.CAP_COMMAND_ME)
         return found
+
+    # -- the command ---------------------------------------------------------
+
+    def on_me_command(self, raw_args: str = "") -> Optional[str]:
+        """`/me`, answered here rather than by the model. See `me.py`."""
+        return me_command.answer(self, raw_args)
 
     # -- the frozen section --------------------------------------------------
 
@@ -256,5 +289,15 @@ def register(ctx, runtime) -> ContextModule:
         # claimed. The per-turn path still works, so this degrades rather than
         # failing the whole plugin.
         logger.warning("hermie: system prompt section unavailable (%s); per-turn context only", exc)
+    try:
+        # Returns None rather than raising when the name is taken, so the
+        # capability follows the handle and not the attempt.
+        handle = ctx.register_command(
+            me_command.COMMAND, module.on_me_command, description=me_command.DESCRIPTION
+        )
+        module.command_registered = handle is not None
+    except Exception as exc:
+        # An older Hermes without in-session commands. Everything else works.
+        logger.warning("hermie: /%s unavailable (%s)", me_command.COMMAND, exc)
     ctx.register_hook("pre_llm_call", module.on_pre_llm_call)
     return module
