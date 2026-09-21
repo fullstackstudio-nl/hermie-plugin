@@ -95,7 +95,8 @@ def subscription():
 
 
 def test_base64url_round_trips_without_padding():
-    assert webpush.unb64(webpush.b64(b"\x00\xff\x10")) == b"\x00\xff\x10"
+    sample = bytes([0, 255, 16])
+    assert webpush.unb64(webpush.b64(sample)) == sample
     assert "=" not in webpush.b64(b"abc")
 
 

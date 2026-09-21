@@ -209,8 +209,8 @@ on. Payloads are kept under ~3.5 KB because APNs caps around 4 KB.
 An approval payload carries `requestId`. That is a hint, not an instruction:
 tapping Allow opens the app, which connects to the gateway, re-reads the open
 requests, and responds only if that request is still open and still says what
-the notification said. A forged "Allow `rm -rf /`" opens an app that finds no
-such request and says so.
+the notification said. A forged "Allow" for a destructive command opens an app
+that finds no such request and says so.
 
 ### Sending
 

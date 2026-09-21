@@ -79,7 +79,7 @@ def test_a_message_is_suppressed_while_somebody_is_looking():
 def test_a_request_is_never_suppressed():
     """A question with a countdown on it is worth a buzz even if a tablet is open."""
     note = events.from_approval(
-        bot="b", session_key="s", description="run rm -rf ./build", request_id="r1", turn_id="t", at=10
+        bot="b", session_key="s", description="delete the build directory", request_id="r1", turn_id="t", at=10
     )
     watching = Section(registrations=[registration()], seen={"i1": 990})
     assert len(deliver(note, watching)) == 1

@@ -187,8 +187,8 @@ def test_an_approval_becomes_a_notification(tmp_path, monkeypatch):
     built = []
     monkeypatch.setattr(module, "offer", lambda note, delay=False: built.append(note))
     module.on_pre_approval_request(
-        surface="gateway", session_key="s1", description="run rm -rf ./build",
-        request_id="req-1", turn_id="t1", command="rm -rf ./build",
+        surface="gateway", session_key="s1", description="delete the build directory",
+        request_id="req-1", turn_id="t1", command="remove-build",
     )
     assert len(built) == 1
     assert module.deliver(built[0]) == 1
@@ -200,7 +200,7 @@ def test_an_approval_becomes_a_notification(tmp_path, monkeypatch):
     assert message["title"] == "jurist"
     # The default payload says who and what kind, never what was said.
     assert "preview" not in message["data"]
-    assert "rm -rf" not in json.dumps(message)
+    assert "remove-build" not in json.dumps(message)
 
 
 def test_the_same_approval_twice_buzzes_once(tmp_path, monkeypatch):
