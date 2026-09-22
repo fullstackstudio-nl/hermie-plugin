@@ -401,9 +401,11 @@ class ContextModule:
     def on_me_command(self, raw_args: str = "") -> Optional[str]:
         """`/me`, answered here rather than by the model. See `me.py`.
 
-        It reads a claim like any other path and then spends it: no model turn
-        follows a command, so the claim would otherwise wait for somebody
-        else's.
+        It tries to spend a claim afterwards, because no model turn follows a
+        command. That is best effort and on today's gateway it finds nothing:
+        Hermes calls a plugin command with no session variables bound, so there
+        is no runtime id to find a claim by. The app never claiming for a slash
+        command is what actually holds.
         """
         try:
             return me_command.answer(self, raw_args)

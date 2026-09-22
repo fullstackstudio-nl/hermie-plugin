@@ -937,11 +937,13 @@ and `pre_llm_call` asks for a claim before it asks anything else
   A claim is for a `prompt.submit` that starts a model turn. The app must not
   claim before a slash command: a command is answered without `pre_llm_call`,
   so no turn spends the claim, and it would wait for the next turn from a
-  client that does not claim. `/me` does try to spend the claim it finds, but
-  that is best effort and on today's dashboard it finds nothing: Hermes runs a
-  plugin command on its RPC pool (`slash.exec`, `command.dispatch`) without
-  binding the session variables, so there is no runtime id to find the claim
-  by. The plugin cannot close this; the app's rule does.
+  client that does not claim. **The plugin cannot prevent this; only the app's
+  rule does.** Hermes calls a plugin command's handler bare, on its RPC pool
+  (`_dispatch_plugin` and the plugin branch of `slash.exec`), with no session
+  variables bound. So `/me` cannot see a claim on a real gateway: it neither
+  reports one nor spends one. It still tries to spend one afterwards, which is
+  harmless and would only matter on a gateway that binds the session for a
+  command; nothing here relies on it.
 - **Last claim wins.** Two people claiming one session inside the window leave
   the later claim standing, and the next turn is resolved for that person. The
   gateway runs one turn per session at a time and the app claims immediately

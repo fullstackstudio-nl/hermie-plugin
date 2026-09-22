@@ -240,6 +240,30 @@ def test_a_claim_made_through_one_copy_is_spent_through_the_other(two_copies):
     assert dashboard.shared().peek(SID) == ""
 
 
+def test_me_on_todays_gateway_leaves_the_claim_where_it_is():
+    """No session bound during a command: nothing to find, nothing spent."""
+    claims = TurnClaims(clock=Clock())
+    module = module_with(claims, FakeSessionContext(**{USER_ID: OPENER}))
+    claims.claim(SID, SENDER)
+
+    module.on_me_command("")
+
+    assert claims.peek(SID) == SENDER
+
+
+def test_a_reloaded_copy_still_finds_the_store(two_copies):
+    """Hermes evicts and re-executes a plugin module on reload: yet another class."""
+    hooks, dashboard = two_copies
+    dashboard.shared().claim(SID, SENDER)
+
+    for key in [key for key in sys.modules if key.split(".")[0] == "hermie_hooks_copy"]:
+        del sys.modules[key]
+    reloaded = load_copy("hermie_hooks_copy")
+
+    assert reloaded.TurnClaims is not hooks.TurnClaims
+    assert reloaded.shared().take(SID) == SENDER
+
+
 def test_the_copies_agree_whichever_asks_first(two_copies):
     hooks, dashboard = two_copies
     hooks.shared().claim(SID, SENDER)
@@ -440,7 +464,13 @@ def test_building_the_prompt_reads_the_claim_without_spending_it():
     assert len(claims) == 0
 
 
-def test_me_names_the_claim_as_the_rung_that_answered():
+def test_me_names_the_claim_where_the_session_is_bound():
+    """Only where a gateway binds the session for a command.
+
+    Hermes today calls a plugin command with no session variables bound, so on
+    a real dashboard `/me` sees no claim at all. This pins what the report says
+    on a gateway that does bind them, not what today's gateway does.
+    """
     from hermie_plugin.context.me import RUNGS
 
     claims = TurnClaims(clock=Clock())
@@ -452,8 +482,13 @@ def test_me_names_the_claim_as_the_rung_that_answered():
     assert "Sam" in answer and RUNGS[BY_CLAIM] in answer
 
 
-def test_a_command_spends_the_claim_so_the_next_unclaimed_turn_is_the_hooks():
-    """No model turn follows `/me`, so its claim must not wait for somebody else's."""
+def test_me_spends_a_claim_only_where_the_session_is_bound():
+    """Best effort, and only on a gateway that binds the session for a command.
+
+    Hermes today calls a plugin command with no session variables bound, so the
+    discard finds nothing on a real dashboard. The guarantee that a command
+    leaves no claim behind is the app's: it never claims for one.
+    """
     claims = TurnClaims(clock=Clock())
     hermes = FakeSessionContext(**{UI_SESSION_ID: SID, USER_ID: OPENER})
     module = module_with(claims, hermes)
