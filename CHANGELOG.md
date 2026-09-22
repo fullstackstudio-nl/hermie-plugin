@@ -8,6 +8,21 @@ people.
 
 ### Added
 
+- `push.session_kind` — a payload says whether its session is the bot's
+  canonical chat, a branch, or neither, so a tap can open the right conversation
+  now that a bot has more than one. Read from the session's title, the same
+  signal and the same three titles the app classifies by, and advertised only
+  where this gateway can actually read one. A session it cannot read carries no
+  kind at all rather than a guess, and the title is read once per notification
+  rather than cached, because a branch that gets promoted changes its title.
+
+- `cron`, `cronCertain` and `jobId` now ride an **approval or a question raised
+  inside a scheduled run** as well as the cron deliveries and turn endings that
+  already carried them. They stay `request` notifications — somebody is still
+  being asked — but "this is a job you are not watching" is the most useful
+  thing a lock screen can add to a question. Neither hook carries a `task_id`,
+  so the answer there comes from `HERMES_CRON_SESSION` or a `cron_…` session id.
+
 - `push.per_bot` — the `push.perBot` overrides the app writes beside the
   registrations are read and folded over each device's own switches, by the same
   rule (and the same function name) the app's switch screen uses. The bag is

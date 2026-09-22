@@ -133,6 +133,10 @@ CAP_PUSH_PER_BOT = "push.per_bot"
 # origin — the same string the app computes for the address it registered
 # against. A device set up against two gateways can tell which one buzzed.
 CAP_PUSH_GATEWAY_KEY = "push.gateway_key"
+# A payload says whether its session is the bot's canonical chat, a branch, or
+# neither, so a tap can open the right conversation. Advertised only where this
+# gateway can actually read a session's title.
+CAP_PUSH_SESSION_KIND = "push.session_kind"
 CAP_UIMETA_PER_USER = "ui_meta.per_user"
 CAP_CONTEXT_PROMPT = "context.system_prompt"
 CAP_CONTEXT_PER_BOT = "context.per_bot"

@@ -63,14 +63,16 @@ class Notification:
     text: str = ""  # the previewable content, never sent unless preview is on
     extra: Dict[str, Any] = field(default_factory=dict)
 
-    def payload(self, *, preview: bool, gateway_key: str = "") -> Dict[str, Any]:
+    def payload(self, *, preview: bool, gateway_key: str = "", session_kind: str = "") -> Dict[str, Any]:
         """What travels. Keep this small: APNs caps at ~4KB and so does the rest.
 
-        `gateway_key` is a fact about this DELIVERY rather than about the event,
-        which is why it is an argument here instead of a field on the
-        notification: it is the key the RECEIVING device registered against. It
-        is omitted when empty, so a reader checks for absence rather than for a
-        falsy value it would then have to decide about.
+        `gateway_key` and `session_kind` are facts about this DELIVERY rather
+        than about the event, which is why they are arguments here instead of
+        fields on the notification: the key is the one the receiving device
+        registered against, and the kind is read when the notification is sent
+        rather than when the hook fired. Both are omitted when empty, so a
+        reader checks for absence rather than for a falsy value it would then
+        have to decide about.
         """
         body = {
             "v": PAYLOAD_VERSION,
@@ -81,6 +83,8 @@ class Notification:
         }
         if self.session_id:
             body["sessionId"] = self.session_id
+        if session_kind:
+            body["sessionKind"] = session_kind
         if gateway_key:
             body["gatewayKey"] = gateway_key
         for key, value in self.extra.items():
@@ -131,14 +135,29 @@ def from_assistant_message(
 
 
 def from_approval(
-    *, bot: str, session_key: str, description: Any, request_id: Any, turn_id: Any, at: int
+    *,
+    bot: str,
+    session_key: str,
+    description: Any,
+    request_id: Any,
+    turn_id: Any,
+    at: int,
+    cron: Optional["Cron"] = None,
 ) -> Notification:
     """An agent stopped to ask (`pre_approval_request`).
 
     The request id travels so the app can find the request again — and it finds
     it by asking the gateway, not by trusting this. A notification that names a
     request which is already answered opens an app that says so.
+
+    A request raised INSIDE a scheduled run carries the cron fields too. It
+    stays a `request` — somebody is still being asked — but "this is a job you
+    are not watching" is the most useful thing a lock screen can add to a
+    question, and it is the same answer core's own unattended-approval check
+    arrives at from the same signal.
     """
+    extra: Dict[str, Any] = {"requestId": str(request_id or "")} if request_id else {}
+    extra.update(_cron_extra(cron))
     return Notification(
         type="request",
         bot=bot,
@@ -148,11 +167,19 @@ def from_approval(
         session_id=str(session_key or ""),
         at=at,
         event_id=event_id("request", session_key, request_id or turn_id or description),
-        extra={"requestId": str(request_id or "")} if request_id else {},
+        extra=extra,
     )
 
 
-def from_clarify(*, bot: str, session_id: str, tool_call_id: Any, question: Any, at: int) -> Notification:
+def from_clarify(
+    *,
+    bot: str,
+    session_id: str,
+    tool_call_id: Any,
+    question: Any,
+    at: int,
+    cron: Optional["Cron"] = None,
+) -> Notification:
     """An agent asked a question (`pre_tool_call` for the `clarify` tool).
 
     Hermes fires no clarify-specific hook, so this rides the generic tool hook.
@@ -169,6 +196,7 @@ def from_clarify(*, bot: str, session_id: str, tool_call_id: Any, question: Any,
         session_id=session_id,
         at=at,
         event_id=event_id("clarify", session_id, tool_call_id),
+        extra=_cron_extra(cron),
     )
 
 

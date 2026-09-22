@@ -53,6 +53,7 @@ empty, so a reader checks for absence.
 | `at` | yes | unix seconds |
 | `eventId` | yes | the dedupe id, so two hooks describing one fact buzz once |
 | `sessionId` | where known | the session the turn happened in |
+| `sessionKind` | where readable | `canonical`, `branch` or `other` — which conversation to open |
 | `gatewayKey` | where known | which gateway sent it, for a device set up against several |
 | `requestId` | approvals | re-validated against the gateway before anything is answered |
 | `cron`, `cronCertain` | cron runs | that this was a scheduled run, and whether that is a fact or a guess |
@@ -66,6 +67,12 @@ gateway takes it from the registration the device wrote; where an older
 registration carries none, it falls back to `push.public_url`, else Hermes'
 own `dashboard.public_url`. A device that does not recognise a key simply does
 not switch.
+
+**`sessionKind`** is there because a bot no longer has exactly one conversation:
+the app branches a chat and retires the one `/new` puts away, so a tap needs to
+know which kind of conversation it is opening. The gateway reads the session's
+title — `Bot Chat` is the canonical one, `Branch · …` is a branch, anything else
+is `other` — and says nothing at all when it cannot read one.
 
 ## Capabilities
 
@@ -85,6 +92,7 @@ that cannot work is worse than one that is absent.
 | `push.seen.per_chat` | a `{bot, at}` heartbeat is understood, so suppression is per chat |
 | `push.per_bot` | a chat's own switches (`push.perBot`) are folded over the global ones |
 | `push.gateway_key` | every payload names the gateway it came from |
+| `push.session_kind` | a payload says whether its session is the bot's chat, a branch, or neither |
 | `push.type.turn_done` | "a turn finished" is switched on |
 | `push.type.turn_failed` | "a turn failed" is switched on |
 | `push.type.cron_done` | "a scheduled job finished" is switched on |

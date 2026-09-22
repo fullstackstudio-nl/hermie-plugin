@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional
 
 from .. import contract
 from . import cron as cron_signal
-from . import events, expo, gateway_key, webpush
+from . import events, expo, gateway_key, sessions, webpush
 from .registrations import Section, read_sections
 
 logger = logging.getLogger(__name__)
@@ -113,6 +113,8 @@ class PushModule:
             contract.CAP_PUSH_PER_BOT,
             contract.CAP_PUSH_GATEWAY_KEY,
         ]
+        if sessions.available():
+            found.append(contract.CAP_PUSH_SESSION_KIND)
         if webpush.available():
             found.append(contract.CAP_PUSH_WEBPUSH)
         if self.gateway_preview == "device":
@@ -198,6 +200,21 @@ class PushModule:
     def section(self) -> Section:
         return read_sections(self.runtime.app_sections())
 
+    def session_kind(self, notification: events.Notification) -> str:
+        """`canonical`, `branch`, `other`, or ``""`` when this gateway cannot say.
+
+        A bot no longer has exactly one conversation, so a tap needs to know
+        which kind of one it is opening. Never raises and never guesses: a
+        session that cannot be read leaves the field out, and the app reads the
+        notification the way it read every notification before this existed.
+        """
+        if not notification.session_id:
+            return ""
+        try:
+            return sessions.kind_for(notification.session_id)
+        except Exception:
+            return ""
+
     def deliver(self, notification: events.Notification) -> int:
         """Send one notification to everybody who asked for it. Returns the count."""
         state = self.runtime.state
@@ -216,7 +233,11 @@ class PushModule:
         if not targets:
             return 0
 
-        # Per device, because it is the address THAT device registered against.
+        # Read once for the notification rather than once per device: every
+        # copy of one notification is about the same session, and this is a
+        # database read. The key is the opposite — it is per device, because it
+        # is the address THAT device registered against.
+        session_kind = self.session_kind(notification)
         fallback_key = self.fallback_gateway_key()
 
         expo_batch: List[Dict[str, Any]] = []
@@ -228,6 +249,7 @@ class PushModule:
             payload = notification.payload(
                 preview=preview,
                 gateway_key=gateway_key.key_for(registration.gateway_key, fallback_key),
+                session_kind=session_kind,
             )
             if registration.transport == "expo":
                 if not expo.is_expo_token(registration.token or ""):
@@ -364,6 +386,10 @@ class PushModule:
                 request_id=kwargs.get("request_id"),
                 turn_id=kwargs.get("turn_id"),
                 at=int(time.time()),
+                # This hook carries no `task_id`, so the answer comes from the
+                # session variable or from a `cron_…` session id — core fills in
+                # `session_id` on an approval hook when the context has one.
+                cron=self.cron_of(kwargs),
             )
         )
 
@@ -378,6 +404,7 @@ class PushModule:
                 tool_call_id=kwargs.get("tool_call_id"),
                 question=args.get("question") or args.get("prompt"),
                 at=int(time.time()),
+                cron=self.cron_of(kwargs),
             )
         )
 

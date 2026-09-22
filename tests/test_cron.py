@@ -300,3 +300,101 @@ def test_the_new_types_are_on_by_default_and_switchable():
     narrowed, _ = push_module({"push.types": ["message", "cron"]})
     assert "cron_done" not in narrowed.enabled_types
     assert "push.type.cron_done" not in narrowed.capabilities()
+
+
+# -- the cron fields, on every payload that can carry them -------------------
+
+
+def test_every_cron_notification_says_how_sure_the_gateway_is():
+    """`cronCertain` is the difference between a fact and a guess about a
+    free-text platform string, and an app that labels a notification
+    "scheduled job" is relying on it."""
+    certain = a_cron()
+    guessed = cron.Cron(source=cron.BY_PLATFORM)
+
+    for built in (
+        events.from_cron_delivery(
+            bot="b", session_id="s", turn_id="t", assistant_response="done", at=10, cron=certain
+        ),
+        events.from_session_end(
+            bot="b", session_id="s", turn_id="t", completed=True, failed=False,
+            interrupted=False, at=10, cron=certain,
+        ),
+        events.from_session_end(
+            bot="b", session_id="s", turn_id="t", completed=False, failed=True,
+            interrupted=False, at=10, cron=certain,
+        ),
+    ):
+        payload = built.payload(preview=False)
+        assert payload["cron"] is True
+        assert payload["cronCertain"] is True
+        assert payload["jobId"] == "nightly-report"
+
+    payload = events.from_session_end(
+        bot="b", session_id="s", turn_id="t", completed=True, failed=False,
+        interrupted=False, at=10, cron=guessed,
+    ).payload(preview=False)
+    assert payload["cronCertain"] is False
+    # A job id is only ever said when one was actually read.
+    assert "jobId" not in payload
+
+
+def test_an_approval_raised_inside_a_scheduled_run_says_so():
+    """It is still a request — somebody is being asked — but "this is a job you
+    are not watching" is the most useful thing a lock screen can add."""
+    payload = events.from_approval(
+        bot="b", session_key="cron_nightly-report_20260922_030000", description="d",
+        request_id="r1", turn_id="t1", at=10, cron=a_cron(),
+    ).payload(preview=False)
+
+    assert payload["type"] == "request"
+    assert payload["cron"] is True and payload["cronCertain"] is True
+    assert payload["jobId"] == "nightly-report"
+    assert payload["requestId"] == "r1"
+
+
+def test_a_question_asked_inside_a_scheduled_run_says_so_too():
+    payload = events.from_clarify(
+        bot="b", session_id="cron_nightly-report_20260922_030000", tool_call_id="c1",
+        question="which quarter?", at=10, cron=a_cron(),
+    ).payload(preview=False)
+
+    assert payload["type"] == "request"
+    assert payload["cron"] is True and payload["jobId"] == "nightly-report"
+
+
+def test_an_ordinary_request_carries_no_cron_fields():
+    payload = events.from_approval(
+        bot="b", session_key="s1", description="d", request_id="r1", turn_id="t1", at=10
+    ).payload(preview=False)
+
+    assert "cron" not in payload and "cronCertain" not in payload
+
+
+def test_the_approval_hook_reads_the_session_variable_for_its_answer(monkeypatch):
+    """`pre_approval_request` carries no `task_id`, so the marker core binds for
+    the run is what is left — and core fills in `session_id` on the hook."""
+    from hermie_plugin.push import cron as cron_module
+
+    monkeypatch.setattr(cron_module, "read_session_var", lambda: "1")
+    module, offered = push_module()
+
+    module.on_pre_approval_request(
+        surface="gateway", session_key="s1", session_id="s1", description="delete it",
+        request_id="r1", turn_id="t1",
+    )
+
+    assert [n.type for n in offered] == ["request"]
+    assert offered[0].payload(preview=False)["cronCertain"] is True
+
+
+def test_the_clarify_hook_reads_the_task_id_for_its_answer():
+    module, offered = push_module()
+
+    module.on_pre_tool_call(
+        tool_name="clarify", session_id="s1", task_id="cron:nightly-report:9f2c",
+        tool_call_id="c1", args={"question": "which quarter?"},
+    )
+
+    assert [n.type for n in offered] == ["request"]
+    assert offered[0].payload(preview=False)["jobId"] == "nightly-report"

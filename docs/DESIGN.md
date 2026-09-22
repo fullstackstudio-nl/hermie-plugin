@@ -479,6 +479,7 @@ on. Payloads are kept under ~3.5 KB because APNs caps around 4 KB.
 |---|---|---|
 | `v`, `type`, `bot`, `at`, `eventId` | always | the shape, the kind, the bot, the second, the dedupe id |
 | `sessionId` | where known | the session the turn happened in |
+| `sessionKind` | where readable | `canonical` \| `branch` \| `other` |
 | `gatewayKey` | where known | which gateway sent it |
 | `requestId` | approvals | the request to re-read |
 | `cron`, `cronCertain`, `jobId` | cron runs | that it was scheduled, how sure, and which job |
@@ -489,6 +490,13 @@ tapping Allow opens the app, which connects to the gateway, re-reads the open
 requests, and responds only if that request is still open and still says what
 the notification said. A forged "Allow" for a destructive command opens an app
 that finds no such request and says so.
+
+`cron`, `cronCertain` and `jobId` ride every notification raised inside a
+scheduled run — including an **approval or a question**, which stay `request`
+notifications because somebody is still being asked. Those two hooks carry no
+`task_id`, so the answer there comes from `HERMES_CRON_SESSION` or from a
+`cron_…` session id; core fills in `session_id` on an approval hook when the
+context has one.
 
 ### Which gateway sent it
 
@@ -541,6 +549,39 @@ gateway that is live.
 It is not a secret and not a security boundary. Anything that can reach a
 device's push token already knows which gateway it came from, and a tap arriving
 with a forged key selects a gateway the owner has already configured.
+
+### Which conversation it belongs to
+
+A bot used to have exactly one chat, so naming the bot named the conversation.
+The app now branches a conversation and retires the one `/new` puts away, so a
+turn can happen in a session nobody is looking at and a tap has to land on the
+right one. `sessionId` was always there; `sessionKind` is what lets the app
+choose a destination before it has resolved anything.
+
+Upstream's session row has no parent field and no kind field — the app says so
+in `features/sessions/session-model.ts` and classifies by title. This reads the
+same three titles out of the same registry, through `get_session_title`:
+
+| Title | Kind |
+|---|---|
+| exactly `Bot Chat` | `canonical` — the registry key ADR-0007 gives a bot |
+| `Branch` or `Branch · …` | `branch` |
+| anything else, including `Bot Chat · <date time>` | `other` |
+
+`other` rather than the app's own `past`, because `past` is "everything else the
+app decided to list" and a gateway cannot know that. What it can say is "not the
+canonical chat and not a branch".
+
+**A session that cannot be read says nothing at all**, and the field is omitted:
+no Hermes, no registry, an id it has never seen, a row with no title. Guessing
+`other` is the answer that would send a tap to the wrong screen, and an absent
+field is read exactly as every notification was read before this existed.
+
+The title is read **once per notification, on the sender's thread**, beside the
+HTTP calls rather than on the agent's path. It is deliberately not cached: a
+branch somebody promotes to Bot Chat changes its title, and a stale kind opens
+the wrong conversation for as long as the cache holds. One indexed row read is
+cheaper than that mistake.
 
 ### Sending
 
@@ -844,7 +885,8 @@ plugins:
       settings:
         modules: {push: true, context: true}
         push:
-          types: [message, request, cron, turn_done, turn_failed]
+          types: [message, request, cron, cron_done, cron_failed,
+                  turn_done, turn_failed]
           preview: device          # or "never"
           attached_window_seconds: 90
           delay_seconds: 5
@@ -864,11 +906,14 @@ plugins:
 it is disposable in the "one redundant notification" direction; none of it is a
 credential and none of it is a registration.
 
-The gateway key is deliberately **not** stored. It is derived — from the
-registration that is about to be sent to, or from configuration — so there is no
-copy to go stale when somebody re-addresses their gateway. The one thing held is
-the CONFIGURED key, worked out once per load in memory, because neither the
-setting nor `dashboard.public_url` moves while a gateway runs.
+Two things a reader might expect to find here are deliberately **not** stored.
+The gateway key is derived — from the registration that is about to be sent to,
+or from configuration — so there is no copy to go stale when somebody
+re-addresses their gateway. A session's kind is read when the notification is
+sent, for the reason §3 gives: a branch that gets promoted changes its title,
+and a cached kind opens the wrong conversation. The one thing held in memory is
+the CONFIGURED key, worked out once per load, because neither the setting nor
+`dashboard.public_url` moves while a gateway runs.
 
 The VAPID private key sits beside it, `0600`. It is the one secret this plugin
 holds, and it is one it minted itself.

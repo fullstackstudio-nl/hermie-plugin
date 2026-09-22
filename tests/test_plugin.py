@@ -637,3 +637,85 @@ def test_the_per_bot_capability_is_advertised(tmp_path, monkeypatch):
     assert contract.CAP_PUSH_PER_BOT in contract.read_capabilities(
         uimeta.read_key(uimeta.PLUGIN_KEY, home)
     )
+
+
+def test_a_delivered_payload_says_which_conversation_it_is_about(tmp_path, monkeypatch):
+    home, ctx = gateway(tmp_path, app_meta=app_meta_with(registrations={"i1": expo_registration()}))
+    monkeypatch.setattr(uimeta, "hermes_home", lambda: home)
+
+    import hermie_plugin.push as push_pkg
+
+    monkeypatch.setattr(push_pkg.sessions, "read_title", lambda session_id: "Branch \u00b7 late filing")
+
+    module = push_pkg.PushModule(hermie_plugin.Runtime(ctx, home=home))
+    note = events.from_assistant_message(
+        bot="jurist", session_id="stored-abc123", turn_id="t1", assistant_response="hello", at=10
+    )
+    payload = sent_payloads(module, monkeypatch, push_pkg, note)[0]
+
+    assert payload["sessionId"] == "stored-abc123"
+    assert payload["sessionKind"] == "branch"
+
+
+def test_a_session_this_gateway_cannot_read_carries_no_kind(tmp_path, monkeypatch):
+    """A bare checkout has no session registry, which is also the state a
+    gateway too old for one is in."""
+    home, ctx = gateway(tmp_path, app_meta=app_meta_with(registrations={"i1": expo_registration()}))
+    monkeypatch.setattr(uimeta, "hermes_home", lambda: home)
+
+    import hermie_plugin.push as push_pkg
+
+    module = push_pkg.PushModule(hermie_plugin.Runtime(ctx, home=home))
+    note = events.from_assistant_message(
+        bot="jurist", session_id="stored-abc123", turn_id="t1", assistant_response="hello", at=10
+    )
+
+    assert "sessionKind" not in sent_payloads(module, monkeypatch, push_pkg, note)[0]
+
+
+def test_the_session_kind_is_read_once_for_every_device(tmp_path, monkeypatch):
+    """It is a database read and every copy of one notification is about the
+    same session."""
+    home, ctx = gateway(
+        tmp_path,
+        app_meta=app_meta_with(
+            registrations={
+                "i1": expo_registration(),
+                "i2": expo_registration(token="ExponentPushToken[bbbbbbbbbbbbbbbbbbbbbb]"),
+            }
+        ),
+    )
+    monkeypatch.setattr(uimeta, "hermes_home", lambda: home)
+
+    import hermie_plugin.push as push_pkg
+
+    reads = []
+    monkeypatch.setattr(
+        push_pkg.sessions, "read_title", lambda session_id: reads.append(session_id) or "Bot Chat"
+    )
+
+    module = push_pkg.PushModule(hermie_plugin.Runtime(ctx, home=home))
+    note = events.from_assistant_message(
+        bot="jurist", session_id="s1", turn_id="t1", assistant_response="hello", at=10
+    )
+    payloads = sent_payloads(module, monkeypatch, push_pkg, note)
+
+    assert len(payloads) == 2
+    assert [payload["sessionKind"] for payload in payloads] == ["canonical", "canonical"]
+    assert reads == ["s1"]
+
+
+def test_the_session_kind_capability_follows_the_registry_being_there(tmp_path, monkeypatch):
+    home, ctx = gateway(tmp_path, app_meta=app_meta_with())
+    monkeypatch.setattr(uimeta, "hermes_home", lambda: home)
+
+    import hermie_plugin.push as push_pkg
+
+    # No Hermes on the path here, so nothing to read a session title from.
+    hermie_plugin.register(ctx)
+    caps = contract.read_capabilities(uimeta.read_key(uimeta.PLUGIN_KEY, home))
+    assert contract.CAP_PUSH_SESSION_KIND not in caps
+
+    monkeypatch.setattr(push_pkg.sessions, "available", lambda: True)
+    module = push_pkg.PushModule(hermie_plugin.Runtime(ctx, home=home))
+    assert contract.CAP_PUSH_SESSION_KIND in module.capabilities()
