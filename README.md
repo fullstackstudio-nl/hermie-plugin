@@ -27,6 +27,7 @@ That is the whole install. Hermes clones the repo into
 | **A turn finished or failed** | a notification, if the device asked for those |
 | **A cron job delivered** | a notification, recognised by the scheduler's own marker |
 | **A cron job finished or failed** | a notification, if the device asked for those |
+| **A chat whose switches you changed** | that chat's own answer, folded over your global one |
 | **A bot you muted** | nothing, on any of your devices, until the mute lapses |
 
 By default a notification says **who and what kind** — a bot's name and an event
@@ -82,6 +83,7 @@ that cannot work is worse than one that is absent.
 | `push.preview` | a device may ask for message text in its payload |
 | `push.mute` | a mute written by the app will be obeyed |
 | `push.seen.per_chat` | a `{bot, at}` heartbeat is understood, so suppression is per chat |
+| `push.per_bot` | a chat's own switches (`push.perBot`) are folded over the global ones |
 | `push.gateway_key` | every payload names the gateway it came from |
 | `push.type.turn_done` | "a turn finished" is switched on |
 | `push.type.turn_failed` | "a turn failed" is switched on |

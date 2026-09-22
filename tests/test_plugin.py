@@ -600,3 +600,40 @@ def test_the_gateway_key_capability_is_advertised(tmp_path, monkeypatch):
     assert contract.CAP_PUSH_GATEWAY_KEY in contract.read_capabilities(
         uimeta.read_key(uimeta.PLUGIN_KEY, home)
     )
+
+
+def test_a_chat_the_person_silenced_is_not_delivered(tmp_path, monkeypatch):
+    """The per-chat overrides, through the section the app really writes."""
+    home, ctx = gateway(
+        tmp_path,
+        per_user={
+            "u1": {
+                "v": 1,
+                "push": {
+                    "registrations": {"i1": expo_registration()},
+                    "perBot": {"jurist": {"message": False}},
+                },
+            }
+        },
+    )
+    monkeypatch.setattr(uimeta, "hermes_home", lambda: home)
+
+    import hermie_plugin.push as push_pkg
+
+    module = push_pkg.PushModule(hermie_plugin.Runtime(ctx, home=home))
+    note = events.from_assistant_message(
+        bot="jurist", session_id="s1", turn_id="t1", assistant_response="hello", at=10
+    )
+
+    assert sent_payloads(module, monkeypatch, push_pkg, note) == []
+
+
+def test_the_per_bot_capability_is_advertised(tmp_path, monkeypatch):
+    home, ctx = gateway(tmp_path, app_meta=app_meta_with())
+    monkeypatch.setattr(uimeta, "hermes_home", lambda: home)
+
+    hermie_plugin.register(ctx)
+
+    assert contract.CAP_PUSH_PER_BOT in contract.read_capabilities(
+        uimeta.read_key(uimeta.PLUGIN_KEY, home)
+    )

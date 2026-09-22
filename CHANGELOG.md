@@ -8,6 +8,16 @@ people.
 
 ### Added
 
+- `push.per_bot` — the `push.perBot` overrides the app writes beside the
+  registrations are read and folded over each device's own switches, by the same
+  rule (and the same function name) the app's switch screen uses. The bag is
+  partial on purpose: a type nobody overrode keeps following the global switch
+  as it moves. A mute still outranks all of it — an override is a preference
+  about a type, a mute is somebody saying no to the bot. The section version is
+  not bumped, for the reason ADR-0016 gives: `v` is checked per row and an
+  unreadable row is dropped, so a bump would unregister the device rather than
+  protect the key.
+
 - `push.gateway_key` — every payload names the gateway it came from, as FNV-1a
   (64-bit) over the gateway's public origin in 16 lowercase hex digits. A device
   can be set up against several gateways, and a notification saying only

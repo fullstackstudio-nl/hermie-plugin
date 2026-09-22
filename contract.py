@@ -46,6 +46,8 @@ read for one more version. The readers are ``push/registrations.py`` and
             preview: false
             gatewayKey: bf796761db84e312   # FNV-1a over the origin it registered against
             updatedAt: 1789957143
+        perBot:                     # where one chat differs from the switches above
+          jurist: {cron: false}
         seen:                       # the heartbeat, per device
           <installation id>: {bot: jurist, at: 1789957143}
       context:
@@ -121,6 +123,12 @@ CAP_PUSH_CRON_FAILED = "push.type.cron_failed"
 # not is talking to a gateway whose cron answers were always a guess.
 CAP_PUSH_CRON_SIGNAL = "push.cron.signal"
 CAP_PUSH_SEEN_PER_CHAT = "push.seen.per_chat"
+# The `push.perBot` overrides are read and folded over the device's own
+# switches. Like `push.mute`, this is advertised whether or not an override
+# exists yet: the string says this gateway will obey one, which is what the app
+# needs to know before it offers a per-chat switch that would otherwise be a
+# setting nothing honours.
+CAP_PUSH_PER_BOT = "push.per_bot"
 # Every payload names the gateway it came from, as FNV-1a over the gateway's
 # origin — the same string the app computes for the address it registered
 # against. A device set up against two gateways can tell which one buzzed.

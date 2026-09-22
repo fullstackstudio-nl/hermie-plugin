@@ -110,6 +110,7 @@ class PushModule:
             contract.CAP_PUSH_EXPO,
             contract.CAP_PUSH_MUTE,
             contract.CAP_PUSH_SEEN_PER_CHAT,
+            contract.CAP_PUSH_PER_BOT,
             contract.CAP_PUSH_GATEWAY_KEY,
         ]
         if webpush.available():

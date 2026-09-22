@@ -14,9 +14,12 @@ hands them over — legacy first — so the per-user key wins for the same devic
 Which person a registration belongs to is no longer a guess: it is the key it
 was found under, and it is carried on the registration as `user_id`.
 
-A registration also carries the `gatewayKey` its device computed for the address
-it registered against, which is what a notification puts on the wire so a device
-with several gateways can tell which one buzzed.
+Two things beside a registration belong to the PERSON rather than to a device,
+and both are read here: `mutes`, and the `perBot` bag that says where one chat's
+notification switches differ from the global ones. A registration also carries
+the `gatewayKey` its device computed for the address it registered against,
+which is what a notification puts on the wire so a device with several gateways
+can tell which one buzzed.
 
 The plugin reads these keys and never writes them.
 """
@@ -60,6 +63,13 @@ class Registration:
     gateway_key: str = ""
 
     def wants(self, push_type: str) -> bool:
+        """Whether this device asked about *push_type*, before any chat's say.
+
+        The answer a notification is actually decided on is
+        :func:`effective_types`, which folds that chat's overrides over this.
+        This stays the device's own global answer, which is what the overrides
+        are overrides OF.
+        """
         return self.types.get(push_type, False)
 
 
@@ -80,6 +90,13 @@ class Section:
     seen: Dict[str, Seen] = field(default_factory=dict)
     # user id -> bot -> the second at which the mute lapses, 0 meaning never.
     mutes: Dict[str, Dict[str, int]] = field(default_factory=dict)
+    # user id -> bot -> the types that chat overrides. Partial on purpose: a
+    # type nobody overrode is not in here and follows the device's own switch.
+    per_bot: Dict[str, Dict[str, Dict[str, bool]]] = field(default_factory=dict)
+
+    def overrides_for(self, user_id: str, bot: str) -> Dict[str, bool]:
+        """What this person said about this chat, or an empty bag."""
+        return self.per_bot.get(user_id, {}).get(bot, {})
 
 
 def _text(value: Any) -> str:
@@ -191,6 +208,65 @@ def is_muted(section: Section, user_id: str, bot: str, now: float) -> bool:
     return until == 0 or until > now
 
 
+# -- what one chat says, where it differs from the device's own switches ------
+#
+# The app writes these beside the registrations rather than inside a row, and
+# that is a decision about the READER rather than about a device: somebody who
+# silences one bot's cron deliveries means it on their phone and on their Mac.
+# It is the same argument `mutes` makes for living in the person's own bag.
+
+
+def _overrides(value: Any) -> Dict[str, bool]:
+    """One chat's overrides: only the types it actually mentions.
+
+    PARTIAL on purpose, and that is the whole design — the app's own
+    `PushTypeOverrides` says so. A type this bag does not name follows the
+    global switch as the global switch moves; a full map would freeze every
+    type at whatever it happened to be the day somebody touched one of them.
+    """
+    source = value if isinstance(value, dict) else {}
+    return {name: source[name] for name in PUSH_TYPES if isinstance(source.get(name), bool)}
+
+
+def per_bot_of(app_key_value: Any) -> Dict[str, Dict[str, bool]]:
+    """The ``push.perBot`` map out of one app-owned bag, as the app writes it::
+
+        push:
+          perBot:
+            <bot>: {cron: false, turn_failed: true}
+
+    A bot with nothing recognisable under it is dropped rather than kept as an
+    empty bag, because an empty bag and an absent one mean the same thing.
+    """
+    if not isinstance(app_key_value, dict):
+        return {}
+    push = app_key_value.get("push") if isinstance(app_key_value.get("push"), dict) else {}
+    raw = push.get("perBot") if isinstance(push.get("perBot"), dict) else {}
+    found: Dict[str, Dict[str, bool]] = {}
+    for bot, value in raw.items():
+        overrides = _overrides(value)
+        if str(bot) and overrides:
+            found[str(bot)] = overrides
+    return found
+
+
+def effective_types(types: Dict[str, bool], overrides: Optional[Dict[str, bool]]) -> Dict[str, bool]:
+    """The device's switches with one chat's overrides folded in.
+
+    This is the Python half of `effectivePushTypes` in the app's
+    `packages/gateway-client/src/push.ts`, and it is written the same way on
+    purpose: the app's switch screen and this gateway's decision must not be two
+    rules that merely happen to agree. An override is honoured only when it is a
+    boolean — anything else is not an answer and leaves the global one standing.
+    """
+    merged = dict(types)
+    for name in PUSH_TYPES:
+        value = (overrides or {}).get(name)
+        if isinstance(value, bool):
+            merged[name] = value
+    return merged
+
+
 def registration_of(installation_id: str, value: Any, user_id: str = "") -> Optional[Registration]:
     """One registration, or nothing."""
     if not installation_id or not isinstance(value, dict):
@@ -234,9 +310,10 @@ def read_section(app_key_value: Any, user_id: str = "") -> Section:
     if not isinstance(app_key_value, dict):
         return Section()
     mutes = {user_id: found} if (found := mutes_of(app_key_value)) else {}
+    per_bot = {user_id: chats} if (chats := per_bot_of(app_key_value)) else {}
     push = app_key_value.get("push")
     if not isinstance(push, dict):
-        return Section(mutes=mutes)
+        return Section(mutes=mutes, per_bot=per_bot)
 
     rows = push.get("registrations") if isinstance(push.get("registrations"), dict) else {}
     registrations: List[Registration] = []
@@ -257,7 +334,7 @@ def read_section(app_key_value: Any, user_id: str = "") -> Section:
     for key, value in raw_seen.items():
         _remember(seen, str(key), seen_of(value))
 
-    return Section(registrations=registrations, seen=seen, mutes=mutes)
+    return Section(registrations=registrations, seen=seen, mutes=mutes, per_bot=per_bot)
 
 
 def read_sections(items: Iterable[Tuple[str, Any]]) -> Section:
@@ -271,6 +348,7 @@ def read_sections(items: Iterable[Tuple[str, Any]]) -> Section:
     by_installation: Dict[str, Registration] = {}
     seen: Dict[str, Seen] = {}
     mutes: Dict[str, Dict[str, int]] = {}
+    per_bot: Dict[str, Dict[str, Dict[str, bool]]] = {}
     for user_id, value in items:
         section = read_section(value, user_id)
         for registration in section.registrations:
@@ -278,8 +356,10 @@ def read_sections(items: Iterable[Tuple[str, Any]]) -> Section:
         for installation_id, heartbeat in section.seen.items():
             _remember(seen, installation_id, heartbeat)
         mutes.update(section.mutes)
+        per_bot.update(section.per_bot)
     return Section(
         registrations=sorted(by_installation.values(), key=lambda entry: entry.installation_id),
         seen=seen,
         mutes=mutes,
+        per_bot=per_bot,
     )

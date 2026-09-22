@@ -14,6 +14,10 @@ Three rules shape it, all of them from ADR-0017:
   while the same person reads that chat on a laptop. Requests are not
   suppressed at all — a question with a countdown on it is worth a buzz even if
   the chat is open in another room.
+- **A chat may override the global switches, and a mute outranks both.** The
+  overrides are per person and per bot, partial (a type nobody touched follows
+  the global switch as it moves), and folded by the same function name the app
+  uses. A mute is not weighed against any of it: somebody said no.
 - **A muted bot is silent on every device that person owns.** That one is not a
   heuristic and not per type: somebody said no.
 - **Every notification is a hint, never an instruction.** Nothing in a payload
@@ -28,7 +32,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from .cron import Cron, declared_failure
-from .registrations import Registration, Section, is_muted, looking_at
+from .registrations import Registration, Section, effective_types, is_muted, looking_at
 
 PAYLOAD_VERSION = 1
 
@@ -294,7 +298,13 @@ def recipients(
 
     out: List[tuple[Registration, bool]] = []
     for registration in section.registrations:
-        if not registration.wants(notification.type):
+        # The device's own switches with this chat's overrides folded over them,
+        # by the same rule the app's switch screen uses. An absent override is
+        # not "off": it is "whatever the global switch says", now and later.
+        wanted = effective_types(
+            registration.types, section.overrides_for(registration.user_id, notification.bot)
+        )
+        if not wanted.get(notification.type, False):
             continue
         # A mute is the person's decision about a bot, so it outranks every
         # per-type switch: it silences this bot on every device that person

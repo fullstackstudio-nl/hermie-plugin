@@ -218,8 +218,9 @@ falls through to "the only registered person" and then to nobody.
 Which person a *hook* is about is unchanged: `sender_id` when the gateway named
 one, then `context.default_user`, then the app's own `default`, then the only
 registered person. What changed is that a registration now knows whose it is,
-because it knows which key it came from — that is what `mutes` is checked
-against, and what the push module means by "every device of a user".
+because it knows which key it came from — that is what `mutes` and the per-chat
+`perBot` switches are checked against, and what the push module means by "every
+device of a user".
 
 The plugin still writes none of these keys. `write_key` refuses `hermie-app` and
 every `hermie-app:<user id>` by the same rule and for the same reason: they carry
@@ -428,6 +429,44 @@ The gateway advertises `push.mute` whether or not a mute exists yet: the string
 says this gateway will obey one, which is what the app needs before it offers
 the switch. A copy of the map under `push.mutes` is read as well, for an app
 that files it with the rest of the push settings; the top-level one wins.
+
+### Per-chat switches
+
+A device's registration carries five switches, and a person can override any of
+them for one chat. The app writes those overrides beside the registrations,
+because the decision belongs to the READER rather than to a device — somebody
+who silences one bot's cron deliveries means it on their phone and on their Mac:
+
+```yaml
+hermie-app:owner:
+  push:
+    perBot:
+      jurist: {cron: false}
+      marketing: {turn_failed: true}
+```
+
+The bag is **partial on purpose**. A type it does not name follows the global
+switch *as the global switch moves*; a full copy of all five would freeze every
+type at whatever it happened to be on the day somebody touched one of them. The
+fold is `effective_types` in `push/registrations.py`, written as the Python half
+of `effectivePushTypes` in the app's `packages/gateway-client/src/push.ts` — the
+app's switch screen and this gateway's decision must not be two rules that
+merely happen to agree today.
+
+An override is honoured only when it is a boolean; anything else is not an
+answer and leaves the global switch standing. An override cannot turn on a type
+`push.types` has switched off gateway-wide, which is the same ceiling every
+device setting meets.
+
+**A mute still outranks it.** An override is a preference about a type; a mute
+is somebody saying no to the bot. The two are not weighed against each other,
+and a chat with `{message: true}` on a muted bot is silent.
+
+The section version is deliberately **not** bumped for `perBot`. `v` is checked
+per ROW and an unreadable row is DROPPED, so a bump would not protect the key
+from an older notifier — it would unregister the device and make the phone go
+quiet. `push.per_bot` in the advert is what says this gateway reads it, the same
+way `push.mute` says a mute will be obeyed.
 
 ### Payload
 
