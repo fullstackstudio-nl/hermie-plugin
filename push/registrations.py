@@ -14,6 +14,10 @@ hands them over — legacy first — so the per-user key wins for the same devic
 Which person a registration belongs to is no longer a guess: it is the key it
 was found under, and it is carried on the registration as `user_id`.
 
+A registration also carries the `gatewayKey` its device computed for the address
+it registered against, which is what a notification puts on the wire so a device
+with several gateways can tell which one buzzed.
+
 The plugin reads these keys and never writes them.
 """
 
@@ -21,6 +25,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Tuple
+
+from .gateway_key import is_gateway_key
 
 SECTION_VERSION = 1
 
@@ -48,6 +54,10 @@ class Registration:
     # Whose device this is: the ui_meta key it was read from. Empty means the
     # legacy shared key, which names nobody.
     user_id: str = ""
+    # `gatewayKeyOf` the address this device registered against, as the device
+    # itself computed it. Empty for a row written before the app carried one,
+    # and for a row whose claim is not the shape a key has. See `gateway_key`.
+    gateway_key: str = ""
 
     def wants(self, push_type: str) -> bool:
         return self.types.get(push_type, False)
@@ -202,6 +212,10 @@ def registration_of(installation_id: str, value: Any, user_id: str = "") -> Opti
         "types": _types(value.get("types")),
         "preview": value.get("preview") is True,
         "updated_at": _number(value.get("updatedAt")),
+        # Checked rather than copied. A row saying its key is "yes" would put
+        # "yes" on a notification, and a device comparing keys would match
+        # nothing — which is the failure that looks like nothing at all.
+        "gateway_key": str(value.get("gatewayKey")) if is_gateway_key(value.get("gatewayKey")) else "",
     }
 
     if transport == "expo":

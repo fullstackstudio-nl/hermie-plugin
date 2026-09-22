@@ -59,8 +59,15 @@ class Notification:
     text: str = ""  # the previewable content, never sent unless preview is on
     extra: Dict[str, Any] = field(default_factory=dict)
 
-    def payload(self, *, preview: bool) -> Dict[str, Any]:
-        """What travels. Keep this small: APNs caps at ~4KB and so does the rest."""
+    def payload(self, *, preview: bool, gateway_key: str = "") -> Dict[str, Any]:
+        """What travels. Keep this small: APNs caps at ~4KB and so does the rest.
+
+        `gateway_key` is a fact about this DELIVERY rather than about the event,
+        which is why it is an argument here instead of a field on the
+        notification: it is the key the RECEIVING device registered against. It
+        is omitted when empty, so a reader checks for absence rather than for a
+        falsy value it would then have to decide about.
+        """
         body = {
             "v": PAYLOAD_VERSION,
             "type": self.type,
@@ -70,6 +77,8 @@ class Notification:
         }
         if self.session_id:
             body["sessionId"] = self.session_id
+        if gateway_key:
+            body["gatewayKey"] = gateway_key
         for key, value in self.extra.items():
             body[key] = value
         if preview and self.text:

@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional
 
 from .. import contract
 from . import cron as cron_signal
-from . import events, expo, webpush
+from . import events, expo, gateway_key, webpush
 from .registrations import Section, read_sections
 
 logger = logging.getLogger(__name__)
@@ -38,6 +38,7 @@ class PushModule:
         self.worker: Optional[threading.Thread] = None
         self.lock = threading.Lock()
         self._vapid_key = None
+        self._gateway_key: Optional[str] = None
 
     # -- settings ------------------------------------------------------------
     #
@@ -64,6 +65,30 @@ class PushModule:
     def delay_seconds(self) -> int:
         return int(self.runtime.config("push.delay_seconds", 5) or 5)
 
+    @property
+    def public_url(self) -> str:
+        """What the operator says this gateway is called from outside.
+
+        Only ever a FALLBACK: a registration that carries its own `gatewayKey`
+        is believed first, because that is the string the device will compare
+        against. See `gateway_key.py` for why that order is the safe one.
+        """
+        return str(self.runtime.config("push.public_url", "") or "")
+
+    def fallback_gateway_key(self) -> str:
+        """The configured key, worked out once and remembered.
+
+        Neither the setting nor `dashboard.public_url` changes while a gateway
+        runs, and the second of them reads a config file — this is on the
+        sender's thread, but so is every notification.
+        """
+        if self._gateway_key is None:
+            try:
+                self._gateway_key = gateway_key.configured_key(self.public_url)
+            except Exception:
+                self._gateway_key = ""
+        return self._gateway_key
+
     # -- capabilities --------------------------------------------------------
 
     def capabilities(self) -> List[str]:
@@ -76,10 +101,16 @@ class PushModule:
         # The mute list is honoured whether or not one exists yet: the string
         # says this gateway will obey a mute, which is what the app needs to
         # know before it offers the switch.
+        # `push.gateway_key` is unconditional, and that is not a shortcut: the
+        # key a payload carries comes from the registration the app itself
+        # wrote, so this gateway can honour it without knowing its own address.
+        # A configured `push.public_url` only widens it to rows written before
+        # the app carried one.
         found = [
             contract.CAP_PUSH_EXPO,
             contract.CAP_PUSH_MUTE,
             contract.CAP_PUSH_SEEN_PER_CHAT,
+            contract.CAP_PUSH_GATEWAY_KEY,
         ]
         if webpush.available():
             found.append(contract.CAP_PUSH_WEBPUSH)
@@ -184,13 +215,19 @@ class PushModule:
         if not targets:
             return 0
 
+        # Per device, because it is the address THAT device registered against.
+        fallback_key = self.fallback_gateway_key()
+
         expo_batch: List[Dict[str, Any]] = []
         expo_owners: List[str] = []
         sent = 0
 
         for registration, preview in targets:
             title, body = notification.rendered(preview=preview)
-            payload = notification.payload(preview=preview)
+            payload = notification.payload(
+                preview=preview,
+                gateway_key=gateway_key.key_for(registration.gateway_key, fallback_key),
+            )
             if registration.transport == "expo":
                 if not expo.is_expo_token(registration.token or ""):
                     logger.warning(

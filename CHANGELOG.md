@@ -8,6 +8,22 @@ people.
 
 ### Added
 
+- `push.gateway_key` — every payload names the gateway it came from, as FNV-1a
+  (64-bit) over the gateway's public origin in 16 lowercase hex digits. A device
+  can be set up against several gateways, and a notification saying only
+  "researcher" leaves an app with two of them to choose between. The algorithm
+  is specified rather than shared — it exists in the app's
+  `packages/gateway-client/src/gateway-key.ts`, in Hermie Web's zero-dependency
+  copy and now here — and all three pin the vector
+  `https://gateway.example.com:8443` -> `bf796761db84e312`. The key is taken
+  from the `gatewayKey` the device itself wrote on its registration, because
+  that is the string that device will compare against and the two sides then
+  agree by construction; a row written before the app carried one falls back to
+  the new `push.public_url` setting, else Hermes' own `dashboard.public_url`.
+  A row's claim is checked rather than copied, and a payload that can name no
+  gateway simply carries no key — which is how every notification before this
+  behaved.
+
 - `memory.browse` and `memory.edit` — a memory browser for a profile's
   `MEMORY.md` and `USER.md`, served at `/api/plugins/hermie/memory/`
   (`list`, `search`, `graph`, `edit`). This is the plugin's first HTTP surface

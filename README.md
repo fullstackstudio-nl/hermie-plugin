@@ -38,6 +38,34 @@ Tapping Allow does not approve anything by itself. The app opens, connects to
 the gateway, re-reads the open requests, and answers only if that request is
 still open and still says what the notification said it did.
 
+### What a payload carries
+
+Everything here is a **hint the app resolves against the gateway**, never an
+instruction. A field the gateway cannot fill in is left out rather than sent
+empty, so a reader checks for absence.
+
+| Field | Always? | What it is |
+|---|---|---|
+| `v` | yes | the payload shape, `1` |
+| `type` | yes | `message`, `request`, `cron`, `cron_done`, `cron_failed`, `turn_done`, `turn_failed` |
+| `bot` | yes | the bot's name, which is its profile name |
+| `at` | yes | unix seconds |
+| `eventId` | yes | the dedupe id, so two hooks describing one fact buzz once |
+| `sessionId` | where known | the session the turn happened in |
+| `gatewayKey` | where known | which gateway sent it, for a device set up against several |
+| `requestId` | approvals | re-validated against the gateway before anything is answered |
+| `cron`, `cronCertain` | cron runs | that this was a scheduled run, and whether that is a fact or a guess |
+| `jobId` | where known | the name you gave the job |
+| `preview` | opt-in | the text, only where the device asked **and** the gateway allows it |
+
+**`gatewayKey`** is FNV-1a (64-bit) over the gateway's public origin, as 16
+lowercase hex digits — the same string the app computes for the address it
+registered against, so the two sides agree without ever comparing notes. The
+gateway takes it from the registration the device wrote; where an older
+registration carries none, it falls back to `push.public_url`, else Hermes'
+own `dashboard.public_url`. A device that does not recognise a key simply does
+not switch.
+
 ## Capabilities
 
 The app does not test this plugin's version number. It reads a list of strings
@@ -54,6 +82,7 @@ that cannot work is worse than one that is absent.
 | `push.preview` | a device may ask for message text in its payload |
 | `push.mute` | a mute written by the app will be obeyed |
 | `push.seen.per_chat` | a `{bot, at}` heartbeat is understood, so suppression is per chat |
+| `push.gateway_key` | every payload names the gateway it came from |
 | `push.type.turn_done` | "a turn finished" is switched on |
 | `push.type.turn_failed` | "a turn failed" is switched on |
 | `push.type.cron_done` | "a scheduled job finished" is switched on |
@@ -110,6 +139,12 @@ plugins:
           # Grace period before a message notification goes out, so an app that
           # is opening can claim the chat first.
           delay_seconds: 5
+
+          # What this gateway is called from outside, used to name it in a
+          # payload. Only needed for devices that registered before the app
+          # started writing the key itself, and only when the gateway is
+          # reached somewhere other than `dashboard.public_url`.
+          public_url: ""
 
           # Web Push only. The key is created on first use if this is empty.
           vapid_key_path: ""

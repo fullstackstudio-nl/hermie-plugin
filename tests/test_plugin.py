@@ -522,3 +522,81 @@ def test_a_probe_unload_leaves_the_serving_advert_alone(tmp_path, monkeypatch):
     for callback in serving.unloads:
         callback()
     assert uimeta.read_key(uimeta.PLUGIN_KEY, home)["updatedAt"] == 3_000
+
+
+# -- what one delivered payload actually carries -----------------------------
+
+
+def sent_payloads(module, monkeypatch, push_pkg, notification):
+    """Deliver one notification and hand back the `data` bag of every message."""
+    captured = []
+    monkeypatch.setattr(
+        push_pkg.expo, "send",
+        lambda batch: captured.extend(batch) or [
+            push_pkg.expo.Ticket(token=m["to"], status="ok", receipt_id="r") for m in batch
+        ],
+    )
+    module.deliver(notification)
+    return [message["data"] for message in captured]
+
+
+def an_approval():
+    return events.from_approval(
+        bot="jurist", session_key="s1", description="d", request_id="r1", turn_id="t1", at=10
+    )
+
+
+def test_a_delivered_payload_names_the_gateway_the_device_registered_against(tmp_path, monkeypatch):
+    home, ctx = gateway(
+        tmp_path,
+        app_meta=app_meta_with(
+            registrations={"i1": expo_registration(gatewayKey="bf796761db84e312")}
+        ),
+    )
+    monkeypatch.setattr(uimeta, "hermes_home", lambda: home)
+
+    import hermie_plugin.push as push_pkg
+
+    module = push_pkg.PushModule(hermie_plugin.Runtime(ctx, home=home))
+    payload = sent_payloads(module, monkeypatch, push_pkg, an_approval())[0]
+
+    assert payload["gatewayKey"] == "bf796761db84e312"
+
+
+def test_a_row_with_no_key_falls_back_to_the_configured_origin(tmp_path, monkeypatch):
+    """Every registration written by an app build older than this one."""
+    home, ctx = gateway(
+        tmp_path,
+        app_meta=app_meta_with(registrations={"i1": expo_registration()}),
+        settings={"push.public_url": "https://gateway.example.com:8443/hermes"},
+    )
+    monkeypatch.setattr(uimeta, "hermes_home", lambda: home)
+
+    import hermie_plugin.push as push_pkg
+
+    module = push_pkg.PushModule(hermie_plugin.Runtime(ctx, home=home))
+    payload = sent_payloads(module, monkeypatch, push_pkg, an_approval())[0]
+
+    assert payload["gatewayKey"] == "bf796761db84e312"
+
+
+def test_a_gateway_that_cannot_name_itself_sends_what_it_always_sent(tmp_path, monkeypatch):
+    home, ctx = gateway(tmp_path, app_meta=app_meta_with(registrations={"i1": expo_registration()}))
+    monkeypatch.setattr(uimeta, "hermes_home", lambda: home)
+
+    import hermie_plugin.push as push_pkg
+
+    module = push_pkg.PushModule(hermie_plugin.Runtime(ctx, home=home))
+
+    assert "gatewayKey" not in sent_payloads(module, monkeypatch, push_pkg, an_approval())[0]
+
+
+def test_the_gateway_key_capability_is_advertised(tmp_path, monkeypatch):
+    home, ctx = gateway(tmp_path, app_meta=app_meta_with())
+    monkeypatch.setattr(uimeta, "hermes_home", lambda: home)
+
+    hermie_plugin.register(ctx)
+
+    assert contract.CAP_PUSH_GATEWAY_KEY in contract.read_capabilities(
+        uimeta.read_key(uimeta.PLUGIN_KEY, home)
+    )

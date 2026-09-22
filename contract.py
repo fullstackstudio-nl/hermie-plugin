@@ -44,6 +44,7 @@ read for one more version. The readers are ``push/registrations.py`` and
             types: {message: true, request: true, cron: true,
                     turn_done: false, turn_failed: false}
             preview: false
+            gatewayKey: bf796761db84e312   # FNV-1a over the origin it registered against
             updatedAt: 1789957143
         seen:                       # the heartbeat, per device
           <installation id>: {bot: jurist, at: 1789957143}
@@ -120,6 +121,10 @@ CAP_PUSH_CRON_FAILED = "push.type.cron_failed"
 # not is talking to a gateway whose cron answers were always a guess.
 CAP_PUSH_CRON_SIGNAL = "push.cron.signal"
 CAP_PUSH_SEEN_PER_CHAT = "push.seen.per_chat"
+# Every payload names the gateway it came from, as FNV-1a over the gateway's
+# origin — the same string the app computes for the address it registered
+# against. A device set up against two gateways can tell which one buzzed.
+CAP_PUSH_GATEWAY_KEY = "push.gateway_key"
 CAP_UIMETA_PER_USER = "ui_meta.per_user"
 CAP_CONTEXT_PROMPT = "context.system_prompt"
 CAP_CONTEXT_PER_BOT = "context.per_bot"

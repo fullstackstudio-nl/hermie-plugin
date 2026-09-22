@@ -436,11 +436,72 @@ Bot name and event type. Nothing else, unless the device turned `preview` on
 `preview: never` overrides a device that asked; `preview: device` never turns one
 on. Payloads are kept under ~3.5 KB because APNs caps around 4 KB.
 
+| Field | When | What |
+|---|---|---|
+| `v`, `type`, `bot`, `at`, `eventId` | always | the shape, the kind, the bot, the second, the dedupe id |
+| `sessionId` | where known | the session the turn happened in |
+| `gatewayKey` | where known | which gateway sent it |
+| `requestId` | approvals | the request to re-read |
+| `cron`, `cronCertain`, `jobId` | cron runs | that it was scheduled, how sure, and which job |
+| `preview` | opt-in | the text |
+
 An approval payload carries `requestId`. That is a hint, not an instruction:
 tapping Allow opens the app, which connects to the gateway, re-reads the open
 requests, and responds only if that request is still open and still says what
 the notification said. A forged "Allow" for a destructive command opens an app
 that finds no such request and says so.
+
+### Which gateway sent it
+
+A device can be set up against several gateways, and a notification saying only
+"researcher" leaves an app with two `researcher`s to choose between. The app
+keys its own storage by a random local id, which is exactly the wrong thing to
+put on a wire: it is minted on one device and nothing outside that app has ever
+seen it.
+
+So the payload carries a key derived from the gateway's public ADDRESS:
+**FNV-1a, 64-bit, over the UTF-8 bytes of the origin, as 16 lowercase hex
+digits.** The algorithm is the artefact rather than the implementation — it
+exists in the app's `packages/gateway-client/src/gateway-key.ts`, in Hermie
+Web's own zero-dependency copy, and here — and all three prove themselves
+against one pinned vector:
+
+```
+https://gateway.example.com:8443  ->  bf796761db84e312
+```
+
+The ORIGIN and not the address, so a path prefix somebody added to a
+configuration does not stop a device recognising its own notifications. A
+default port is dropped the way `new URL(...).origin` drops it. A string that is
+not an address answers `""`, which every caller reads as "this names no
+gateway" — the one collision that would matter is an unreadable address sharing
+a key with every other unreadable one.
+
+**Where the origin comes from, in order:**
+
+1. **the key the device wrote on its own registration** — `gatewayKey` beside
+   `transport` and `token`, computed by the app from the very address that
+   device connects to. Both sides then agree *by construction*;
+2. **an origin the operator declared** — `push.public_url`, else Hermes'
+   `dashboard.public_url` (env `HERMES_DASHBOARD_PUBLIC_URL`), read through
+   core's own resolver so the precedence and the validation are core's.
+
+The registration wins, and that reversal of the obvious order is the whole
+decision. A configured public URL is what an operator *believes* the gateway is
+called; a registration's key is what a device actually *reached*. Where they
+disagree the operator's answer would silently stop every device recognising its
+own notifications, and the failure would look like nothing at all. The fallback
+exists because it is the only answer available for a row written before the app
+carried one.
+
+A row's claim is **checked, not copied**: a `gatewayKey` that is not sixteen hex
+digits is read as absent. A payload with no key is what every notifier before
+this sent, and the app reads it the way it always did — open that chat on the
+gateway that is live.
+
+It is not a secret and not a security boundary. Anything that can reach a
+device's push token already knows which gateway it came from, and a tap arriving
+with a forged key selects a gateway the owner has already configured.
 
 ### Sending
 
@@ -748,6 +809,7 @@ plugins:
           preview: device          # or "never"
           attached_window_seconds: 90
           delay_seconds: 5
+          public_url: ""           # default: Hermes' own dashboard.public_url
           vapid_key_path: ""       # default: the plugin's own data dir
           vapid_contact: "mailto:you@example.com"
         context:
@@ -762,6 +824,12 @@ plugins:
 `ctx.state`. It holds sent-event ids (24h) and retired installation ids. All of
 it is disposable in the "one redundant notification" direction; none of it is a
 credential and none of it is a registration.
+
+The gateway key is deliberately **not** stored. It is derived — from the
+registration that is about to be sent to, or from configuration — so there is no
+copy to go stale when somebody re-addresses their gateway. The one thing held is
+the CONFIGURED key, worked out once per load in memory, because neither the
+setting nor `dashboard.public_url` moves while a gateway runs.
 
 The VAPID private key sits beside it, `0600`. It is the one secret this plugin
 holds, and it is one it minted itself.

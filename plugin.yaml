@@ -89,6 +89,14 @@ config_schema:
     type: int
     default: 5
     description: "Grace period before a message notification is sent, so an opening app can claim it."
+  push.public_url:
+    type: str
+    default: ""
+    description: >-
+      The absolute base URL this gateway is reached on from outside, used to
+      name it in a notification payload. Empty falls back to Hermes' own
+      dashboard.public_url. Only consulted for a device that registered before
+      the app started writing the key itself.
   push.vapid_key_path:
     type: str
     default: ""
