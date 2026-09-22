@@ -32,13 +32,20 @@ people.
   id>"}`, and `pre_llm_call` asks for a claim before it asks anything else. The
   identity is the dashboard login the request was authenticated as, spelled
   `<provider>:<user id>` like the gateway spells it; nothing in the body can
-  name anyone. 204 on success, 400 for a missing or malformed id, 403 for a
-  request that is not signed in as a person. A claim is spent by the one turn
-  that uses it and ignored after 90 seconds; two claims on one session inside
-  that window leave the later one standing. The turn is matched by the runtime
-  id Hermes binds for it, with the durable key and agent session id as a
-  fallback only where no runtime id is bound. Building the prompt and `/me` read
-  a claim without spending it, and `/me` names it as the rung that answered.
+  name anyone. 204 on success, 400 for a missing or malformed id, 404 for an id
+  that is not a live runtime session on this dashboard (a session key or a
+  durable id is refused, never stored), 415 for a body not sent as JSON, 403
+  for a request that is not signed in as a person. A claim is spent by the one
+  model turn that uses it and ignored after 30 seconds; two claims on one
+  session inside that window leave the later one standing. The turn is matched
+  by the runtime id Hermes binds for it, and only where none is bound by the
+  durable key and agent session id the route read off the live record. A claim
+  replaces a hook sender only when that sender is spelled as a dashboard login,
+  so a messaging platform's user or a bot is never overridden. Building the
+  prompt reads a claim without spending it; `/me` reads it, names it as the rung
+  that answered, and spends it, since no model turn follows a command. The app
+  claims for a `prompt.submit` that starts a model turn and never for a slash
+  command.
   At most 256 claims are held, in memory, in one store both copies of the
   plugin share; nothing is written and nothing leaves the process.
 

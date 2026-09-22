@@ -87,6 +87,7 @@ from .render import (
     SUPERSEDES_BY_SENDER,
     SUPERSEDES_BY_SENDER_IN_CHAT,
     SUPERSEDES_IN_CHAT,
+    PROVIDER_PREFIX,
     ContextSection,
     Orientation,
     read_sections,
@@ -95,7 +96,7 @@ from .render import (
     same_user,
 )
 from . import me as me_command
-from .live_session import LiveSessions
+from .live_session import LiveSessions, dashboard_providers
 from .session_vars import (
     SESSION_ID,
     SESSION_KEY,
@@ -161,6 +162,7 @@ class ContextModule:
         session_vars: Optional[SessionVars] = None,
         live_sessions: Optional[LiveSessions] = None,
         claims: Optional[TurnClaims] = None,
+        auth_providers: Optional[Callable[[], Tuple[str, ...]]] = None,
     ):
         self.runtime = runtime
         self.session_vars = session_vars if session_vars is not None else SessionVars()
@@ -168,6 +170,9 @@ class ContextModule:
         # Where the dashboard route leaves "the next turn is mine". Shared with
         # the route's own copy of this package; see `turn_claim.py`.
         self.claims = claims if claims is not None else turn_claim.shared()
+        # The dashboard's sign-in provider names, asked per use: a claim only
+        # ever stands in for a sender spelled as a dashboard login.
+        self.auth_providers = auth_providers if auth_providers is not None else dashboard_providers
         # session id -> what the frozen section says, as it was frozen. It
         # answers two questions: "is this sender the one the section already
         # covers?" and "does the section still say what the app says?".
@@ -235,23 +240,73 @@ class ContextModule:
             session_id, *(self.session_vars.read(name) for name in SESSION_NAMES)
         )
 
-    def claimed_sender(self, session_id: str = "", *, take: bool = False) -> str:
-        """The person who claimed this turn from the app, or nothing.
+    def turn_ids(self, session_id: str = "") -> Tuple[str, Tuple[str, ...]]:
+        """The runtime id bound for this turn, and the durable ids it carries.
 
-        Matched by the runtime id Hermes binds for the turn when there is one,
-        and only then by the durable ids — the hook's own `session_id` and the
-        session key. See `turn_claim.py` for why the exact id is never
-        overridden by the fallback.
-
-        `take` spends the claim, and only the turn itself does that. Building
-        the prompt and `/me` look without spending, so the turn that follows
-        still finds it.
+        A claim is matched by the runtime id when one is bound, and only when
+        none is by the durable ids — the hook's own `session_id`, the session
+        id and the session key — against the aliases the route recorded off
+        the live record. See `turn_claim.py`.
         """
         runtime_id = self.session_vars.read(UI_SESSION_ID)
         durable = (session_id, self.session_vars.read(SESSION_ID), self.session_vars.read(SESSION_KEY))
-        if take:
-            return self.claims.take(runtime_id, durable)
-        return self.claims.peek(runtime_id, durable)
+        return runtime_id, durable
+
+    def claim_may_stand_in_for(self, named: str, claimed: str, session_id: str = "") -> bool:
+        """Whether a claim may replace the sender the hook was handed.
+
+        A claim exists to correct one thing: the dashboard naming the login that
+        OPENED a session as the sender of every turn. So it stands in for no
+        sender at all, and for a sender spelled as a dashboard login — a
+        provider prefix the dashboard signs people in with, the claimer's own
+        or the opener's. A sender spelled any other way is somebody the
+        dashboard did not admit — a messaging platform's user, a bot handing a
+        turn to another — and Hermes named them correctly; a claim made from a
+        browser is not evidence against that.
+        """
+        if not named:
+            return True
+        match = PROVIDER_PREFIX.match(named)
+        if match is None:
+            return False
+        providers = set(self.auth_providers() or ())
+        for login in (claimed, self.live_sender(session_id)):
+            found = PROVIDER_PREFIX.match(login or "")
+            if found is not None:
+                providers.add(found.group(1))
+        return match.group(1) in providers
+
+    def claimed_sender(self, named: str = "", session_id: str = "", *, take: bool = False) -> str:
+        """The person who claimed this turn from the app, or nothing.
+
+        `take` spends the claim, and only the turn itself does that. Building
+        the prompt and `/me` look without spending, so the turn that follows
+        still finds it. A claim that may not stand in for the hook's sender is
+        left where it is, unspent: the turn it was made for has not run yet.
+        """
+        runtime_id, durable = self.turn_ids(session_id)
+        claimed = self.claims.peek(runtime_id, durable)
+        if not claimed or not self.claim_may_stand_in_for(named, claimed, session_id):
+            return ""
+        if not take:
+            return claimed
+        taken = self.claims.take(runtime_id, durable)
+        # Another claim may have landed between the look and the take; it is
+        # the newer one, and it passes the same test or is not used.
+        if taken and (taken == claimed or self.claim_may_stand_in_for(named, taken, session_id)):
+            return taken
+        return ""
+
+    def discard_claim(self, session_id: str = "") -> None:
+        """Spend this session's claim without using it.
+
+        For work the plugin answers itself without a model turn, `/me` first
+        among it. A claim sent before a command is a claim no turn will spend,
+        and left alone it would be spent by the next turn from a client that
+        does not claim at all.
+        """
+        runtime_id, durable = self.turn_ids(session_id)
+        self.claims.take(runtime_id, durable)
 
     def sender_with_source(
         self, named: str = "", session_id: str = "", *, take: bool = False
@@ -272,7 +327,8 @@ class ContextModule:
         and reading the record is a dict lookup in this very process rather than
         anything that touches a disk or a socket.
 
-        **A claim comes before all three**, including the hook, for the same
+        **A claim comes before all three**, including a hook sender spelled as
+        a dashboard login (`claim_may_stand_in_for`), for the same
         reason taken one step further: on a dashboard session the hook's sender
         IS the session's creator (`_user_id` is set once from `auth_user_id`
         when the agent is built), so on a shared chat it names the opener on
@@ -280,7 +336,7 @@ class ContextModule:
         send, because it was made by their own authenticated request moments
         before this turn was submitted.
         """
-        claimed = self.claimed_sender(session_id, take=take)
+        claimed = self.claimed_sender(named, session_id, take=take)
         if claimed:
             return claimed, BY_CLAIM
         if named:
@@ -331,8 +387,19 @@ class ContextModule:
     # -- the command ---------------------------------------------------------
 
     def on_me_command(self, raw_args: str = "") -> Optional[str]:
-        """`/me`, answered here rather than by the model. See `me.py`."""
-        return me_command.answer(self, raw_args)
+        """`/me`, answered here rather than by the model. See `me.py`.
+
+        It reads a claim like any other path and then spends it: no model turn
+        follows a command, so the claim would otherwise wait for somebody
+        else's.
+        """
+        try:
+            return me_command.answer(self, raw_args)
+        finally:
+            try:
+                self.discard_claim()
+            except Exception as exc:
+                logger.warning("hermie: could not spend the turn claim after /me: %s", exc)
 
     # -- the frozen section --------------------------------------------------
 

@@ -38,14 +38,27 @@ The rules, each of which a test holds:
 
 **Which id.** The app knows the runtime session id — the `session_id` that
 `session.create` and `session.resume` answer and that `prompt.submit` takes —
-and that is the id it claims. During the turn Hermes binds the same id into the
-session variables as `HERMES_UI_SESSION_ID`, which is the exact match. The hook
-itself is handed the agent's durable session id instead, and a session also has
-a durable key; the route records both beside the runtime id when the live table
-can say what they are, and they are matched only when a turn has no runtime id
-bound at all. The fallback never overrides an exact answer: two windows can hold
+and that is the id it claims. The route refuses any id that is not a live
+runtime session in the dashboard's own table, so a claim is only ever keyed by
+one: a session key or a durable id sent in its place is refused, never stored.
+That matters because other platforms' sessions have keys too, and a claim keyed
+by a messaging chat's key would reach that chat's turns.
+
+During the turn Hermes binds the runtime id into the session variables as
+`HERMES_UI_SESSION_ID`, which is the exact match. The hook itself is handed the
+agent's durable session id instead, and a session also has a durable key; the
+route reads both off the live record it just found and keeps them beside the
+claim as aliases. A turn with no runtime id bound is matched through those
+recorded aliases and nothing else — never by comparing its ids with the claim
+keys. The fallback never overrides an exact answer either: two windows can hold
 two runtime sessions on one stored session, and a turn that knows its own
 runtime id must not spend a claim made for the other.
+
+**What spends a claim.** A turn does, in `pre_llm_call`. So does `/me`, which is
+answered by the plugin without a turn: a claim sent before a command would
+otherwise wait for the next turn from somebody else. The app must not claim for
+a slash command at all; a claim is for a `prompt.submit` that starts a model
+turn.
 
 **One store per process.** Hermes imports this plugin under a name of its own
 for its hooks, and the dashboard imports `dashboard/plugin_api.py` separately,
@@ -65,11 +78,13 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any, Callable, FrozenSet, Iterable, Optional
 
-# How long a claim stands. Long enough to cover a submit that waits for the
-# agent to be built or for a slow network between the two requests, short
-# enough that a claim whose prompt never ran is gone before anybody's next turn
-# of an ordinary conversation.
-TTL_SECONDS = 90.0
+# How long a claim stands. The app claims immediately before `prompt.submit`,
+# so the claim is normally spent within a second or two; the rest is room for a
+# slow network between the two requests and for the agent being built. Kept
+# short because a claim no turn spent — the prompt was steered into a running
+# turn, or never sent — can be spent by the next turn from a client that does
+# not claim, and 30 seconds is the whole of that exposure.
+TTL_SECONDS = 30.0
 
 # How many sessions can hold a claim at once. A claim is spent within seconds in
 # the ordinary case, so this is a ceiling for a misbehaving client, not a size
@@ -82,10 +97,15 @@ MAX_CLAIMS = 256
 # gateway minted, not text to be repaired.
 SESSION_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 
-# The process-wide slot both copies of the plugin find. Versioned, so a plugin
-# update that changes the store's shape gets a fresh one instead of methods
-# from the old class.
-REGISTRY = "hermie_turn_claims_v1"
+# The process-wide slot both copies of the plugin find.
+REGISTRY = "hermie_turn_claims"
+
+# The shape of the store kept in that slot. The slot holds one store per shape,
+# so a copy of the plugin that disagrees about the shape — an update loaded
+# beside an older copy that has not been unloaded — gets a fresh store rather
+# than methods from a class it does not know. ANY change to `TurnClaims` or
+# `Claim` that another copy could observe means bumping this.
+SHAPE = 1
 
 
 @dataclass(frozen=True)
@@ -156,9 +176,9 @@ class TurnClaims:
             # The exact answer. A turn that knows its runtime id is matched by
             # it and by nothing else.
             return session_id if session_id in self.claims else None
-        for alias in aliases:
-            if alias in self.claims:
-                return alias
+        # Only the aliases the route recorded off the live record. A durable id
+        # is never compared with a claim KEY: keys are runtime ids, and a match
+        # there would be a coincidence between two id spaces, not a session.
         # Newest first: the latest claim on a stored session is the one the
         # last-claim-wins rule keeps.
         for key in reversed(self.claims):
@@ -175,16 +195,30 @@ class TurnClaims:
             del self.claims[oldest]
 
 
+# Used only when the slot holds something this code cannot read at all.
+_FALLBACK = TurnClaims()
+
+
 def shared() -> TurnClaims:
-    """The one store in this process, created by whichever copy asks first."""
+    """The one store of this `SHAPE` in this process, made by whoever asks first."""
     holder = sys.modules.get(REGISTRY)
     if holder is None:
         fresh = types.ModuleType(REGISTRY)
-        fresh.claims = TurnClaims()
+        fresh.stores = {}
         # `setdefault` on a dict is atomic, so two copies racing here agree on
-        # whichever store landed first.
+        # whichever holder landed first.
         holder = sys.modules.setdefault(REGISTRY, fresh)
-    return holder.claims
+    stores = getattr(holder, "stores", None)
+    if not isinstance(stores, dict):
+        return _FALLBACK
+    store = stores.get(SHAPE)
+    if not isinstance(store, TurnClaims) and store is not None:
+        # Same shape number, different class: a copy that forgot to bump
+        # `SHAPE`. Not ours to use.
+        return _FALLBACK
+    if store is None:
+        store = stores.setdefault(SHAPE, TurnClaims())
+    return store
 
 
 def valid_session_id(value: Any) -> Optional[str]:

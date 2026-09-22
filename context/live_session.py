@@ -107,28 +107,60 @@ class LiveSessions:
             logger.warning("hermie: could not read the live session: %s", exc)
         return ""
 
-    def durable_ids(self, session_id: str) -> Tuple[str, ...]:
-        """The durable key and agent session id of the runtime session *session_id*.
+    def runtime_record(self, session_id: str) -> Optional[Mapping[str, Any]]:
+        """The live record keyed by this RUNTIME id, or None.
 
-        Used when a turn is claimed, so that a turn whose runtime id is not bound
-        can still find the claim by the ids the hook and the session variables
-        carry. A plain lookup in the table and nothing more: this runs on the
-        dashboard's event loop, where taking the server's session lock would
-        make one request wait on every turn in the gateway.
+        Only the runtime id: this is how the turn-claim route decides whether an
+        id is a live dashboard session at all, and a durable key or a session id
+        must not pass that test by way of `_session_for_key`. A plain lookup and
+        nothing more — it runs on the dashboard's event loop, where taking the
+        server's session lock would make one request wait on every turn.
         """
         server = self.server()
         if server is None or not session_id:
-            return ()
+            return None
         try:
             sessions = getattr(server, "_sessions", None)
             found = sessions.get(session_id) if isinstance(sessions, dict) else None
-            if not isinstance(found, dict):
-                return ()
+            return found if isinstance(found, dict) else None
+        except Exception as exc:
+            logger.warning("hermie: could not read the live session table: %s", exc)
+            return None
+
+    @staticmethod
+    def durable_ids(record: Optional[Mapping[str, Any]]) -> Tuple[str, ...]:
+        """The durable key and agent session id carried by a live record."""
+        if not isinstance(record, Mapping):
+            return ()
+        try:
             ids = (
-                str(found.get("session_key") or ""),
-                str(getattr(found.get("agent"), "session_id", "") or ""),
+                str(record.get("session_key") or ""),
+                str(getattr(record.get("agent"), "session_id", "") or ""),
             )
-            return tuple(item for item in ids if item)
         except Exception as exc:
             logger.warning("hermie: could not read the live session's ids: %s", exc)
             return ()
+        return tuple(item for item in ids if item)
+
+
+# Hermes' registry of dashboard sign-in providers. Looked up, never imported.
+AUTH_REGISTRY_MODULE = "hermes_cli.dashboard_auth.registry"
+
+
+def dashboard_providers(module: Any = None) -> Tuple[str, ...]:
+    """The names of the dashboard's interactive sign-in providers, or ().
+
+    These are the prefixes a dashboard login is spelled with. Anything else a
+    hook might be handed as a sender — a messaging platform's user id, a bot's
+    name — is not a dashboard login, and a turn claim must not stand in for it.
+    """
+    registry = module if module is not None else sys.modules.get(AUTH_REGISTRY_MODULE)
+    lister = getattr(registry, "list_session_providers", None)
+    if not callable(lister):
+        return ()
+    try:
+        names = (str(getattr(provider, "name", "") or "").strip() for provider in lister())
+        return tuple(name for name in names if name)
+    except Exception as exc:
+        logger.warning("hermie: could not list the dashboard's sign-in providers: %s", exc)
+        return ()

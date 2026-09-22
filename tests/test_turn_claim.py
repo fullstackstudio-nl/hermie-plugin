@@ -8,6 +8,7 @@ tests pin both ends: the store the claim lands in, the route that writes it, and
 the hook that spends it.
 """
 
+import sys
 import types
 
 import pytest
@@ -101,6 +102,7 @@ def module_with(claims, hermes=None):
         session_vars=SessionVars(hermes),
         live_sessions=LiveSessions(types.ModuleType("absent")),
         claims=claims,
+        auth_providers=lambda: ("oidc", "basic"),
     )
 
 
@@ -201,6 +203,33 @@ def test_the_store_is_shared_by_every_copy_of_the_plugin():
     assert isinstance(turn_claim.shared(), TurnClaims)
 
 
+def test_a_store_of_another_shape_is_not_used(monkeypatch):
+    holder = types.ModuleType(turn_claim.REGISTRY)
+    older = object()
+    holder.stores = {turn_claim.SHAPE - 1: older}
+    monkeypatch.setitem(sys.modules, turn_claim.REGISTRY, holder)
+
+    store = turn_claim.shared()
+
+    assert isinstance(store, TurnClaims) and store is not older
+    assert holder.stores[turn_claim.SHAPE] is store
+    assert holder.stores[turn_claim.SHAPE - 1] is older, "the other shape's store was left alone"
+
+
+def test_a_slot_this_code_cannot_read_falls_back_to_a_fresh_store(monkeypatch):
+    monkeypatch.setitem(sys.modules, turn_claim.REGISTRY, types.ModuleType(turn_claim.REGISTRY))
+    assert isinstance(turn_claim.shared(), TurnClaims)
+
+    holder = types.ModuleType(turn_claim.REGISTRY)
+    holder.stores = {turn_claim.SHAPE: object()}
+    monkeypatch.setitem(sys.modules, turn_claim.REGISTRY, holder)
+    assert isinstance(turn_claim.shared(), TurnClaims)
+
+
+def test_a_claim_lasts_thirty_seconds():
+    assert turn_claim.TTL_SECONDS == 30.0
+
+
 @pytest.mark.parametrize(
     "value",
     ["", "   ", None, 12, ["a1b2c3d4"], "a" * 200, "../etc", "a b", "a\nb", "a/b"],
@@ -296,6 +325,23 @@ def test_the_claim_is_found_by_the_durable_id_where_no_runtime_id_is_bound():
     assert module.sender_with_source(OPENER, "durable-1", take=True) == (SENDER, BY_CLAIM)
 
 
+def test_a_turn_without_a_runtime_id_never_matches_a_claim_key():
+    """The takeover: a messaging turn whose session key equals a claim's key.
+
+    Keys are runtime ids and the route only accepts live ones, but the store
+    must not rely on that: without a runtime id a turn is matched through the
+    aliases recorded off the live record and nothing else.
+    """
+    claims = TurnClaims(clock=Clock())
+    hermes = FakeSessionContext(**{SESSION_KEY: "agent:main:telegram:dm:12345"})
+    module = module_with(claims, hermes)
+
+    claims.claim("agent:main:telegram:dm:12345", SENDER)
+
+    assert module.sender_with_source("", "agent:main:telegram:dm:12345", take=True) == ("", "")
+    assert claims.take("", aliases=("agent:main:telegram:dm:12345",)) == ""
+
+
 def test_building_the_prompt_reads_the_claim_without_spending_it():
     """The section built for this turn describes the claimer; the hook then agrees."""
     claims = TurnClaims(clock=Clock())
@@ -321,7 +367,56 @@ def test_me_names_the_claim_as_the_rung_that_answered():
     answer = module.on_me_command("")
 
     assert "Sam" in answer and RUNGS[BY_CLAIM] in answer
-    assert claims.peek(SID) == SENDER, "/me spent the claim meant for the turn"
+
+
+def test_a_command_spends_the_claim_so_the_next_unclaimed_turn_is_the_hooks():
+    """No model turn follows `/me`, so its claim must not wait for somebody else's."""
+    claims = TurnClaims(clock=Clock())
+    hermes = FakeSessionContext(**{UI_SESSION_ID: SID, USER_ID: OPENER})
+    module = module_with(claims, hermes)
+    opened_by_the_opener(module)
+
+    claims.claim(SID, SENDER)
+    module.on_me_command("")
+
+    assert len(claims) == 0
+    assert module.on_pre_llm_call(session_id="durable-1", sender_id=OPENER) is None
+    assert hermes.snapshot()[USER_ID] == OPENER
+
+
+def test_the_session_variables_are_rewritten_for_the_claimer_not_the_opener():
+    claims = TurnClaims(clock=Clock())
+    hermes = FakeSessionContext(**{UI_SESSION_ID: SID, USER_ID: OPENER, USER_NAME: "Otto"})
+    module = module_with(claims, hermes)
+    opened_by_the_opener(module)
+
+    claims.claim(SID, SENDER)
+    module.on_pre_llm_call(session_id="durable-1", sender_id=OPENER)
+
+    assert hermes.snapshot()[USER_ID] == SENDER
+    assert hermes.snapshot()[USER_NAME] == "Sam"
+
+
+@pytest.mark.parametrize("named", ["12345", "jurist", "telegram:12345"])
+def test_a_sender_the_dashboard_did_not_admit_is_not_overridden(named):
+    """A platform user or a bot handing a turn over was named correctly by Hermes."""
+    claims = TurnClaims(clock=Clock())
+    hermes = FakeSessionContext(**{UI_SESSION_ID: SID, USER_ID: OPENER})
+    module = module_with(claims, hermes)
+
+    claims.claim(SID, SENDER)
+
+    assert module.sender_with_source(named, "durable-1", take=True) == (named, BY_HOOK)
+    assert claims.peek(SID) == SENDER, "a claim that did not apply was spent"
+
+
+def test_a_sender_spelled_as_another_dashboard_login_is_overridden():
+    claims = TurnClaims(clock=Clock())
+    module = module_with(claims)
+
+    claims.claim(SID, SENDER)
+
+    assert module.sender_with_source("basic:opener", "durable-1", take=True) == (SENDER, BY_CLAIM)
 
 
 def test_a_turn_with_no_claim_is_exactly_what_it_was():
@@ -343,7 +438,6 @@ def test_the_advert_carries_the_capability():
 fastapi = pytest.importorskip("fastapi", reason="FastAPI ships with the Hermes runtime")
 
 import importlib.util  # noqa: E402
-import sys  # noqa: E402
 from pathlib import Path  # noqa: E402
 
 PREFIX = "/api/plugins/hermie"
@@ -401,6 +495,44 @@ def routes():
     return load_route_module()
 
 
+@pytest.fixture(autouse=True)
+def live(monkeypatch):
+    """The dashboard's session table, with one live runtime session in it."""
+    server = types.ModuleType(GATEWAY_MODULE)
+    server._sessions = {
+        SID: {"session_key": "key-1", "agent": types.SimpleNamespace(session_id="durable-1")}
+    }
+    monkeypatch.setitem(sys.modules, GATEWAY_MODULE, server)
+    return server
+
+
+@pytest.mark.parametrize("session_id", ["key-1", "durable-1", "agent:main:telegram:dm:12345", "ffff0000"])
+def test_an_id_that_is_not_a_live_runtime_session_is_refused(routes, store, session_id):
+    """A session key, a durable id, another platform's key, a closed session."""
+    response = app_signed_in_as(routes, person()).post(PATH, json={"session_id": session_id})
+
+    assert response.status_code == 404, response.text
+    assert len(store) == 0
+
+
+def test_a_gateway_with_no_session_table_refuses_every_claim(routes, store, monkeypatch):
+    monkeypatch.delitem(sys.modules, GATEWAY_MODULE)
+
+    assert app_signed_in_as(routes, person()).post(PATH, json={"session_id": SID}).status_code == 404
+    assert len(store) == 0
+
+
+@pytest.mark.parametrize("content_type", ["text/plain", "application/x-www-form-urlencoded", ""])
+def test_a_body_not_sent_as_json_is_refused(routes, store, content_type):
+    headers = {"content-type": content_type} if content_type else {}
+    response = app_signed_in_as(routes, person()).post(
+        PATH, content=b'{"session_id": "a1b2c3d4"}', headers=headers
+    )
+
+    assert response.status_code == 415, response.text
+    assert len(store) == 0
+
+
 def test_the_route_records_the_signed_in_person(routes, store):
     response = app_signed_in_as(routes, person()).post(PATH, json={"session_id": SID})
 
@@ -446,15 +578,14 @@ def test_a_request_that_names_no_person_is_refused(routes, store):
     assert len(store) == 0
 
 
-def test_the_route_records_the_durable_ids_beside_the_runtime_one(routes, store, monkeypatch):
-    server = types.ModuleType(GATEWAY_MODULE)
-    server._sessions = {
-        SID: {"session_key": "key-1", "agent": types.SimpleNamespace(session_id="durable-1")}
-    }
-    monkeypatch.setitem(sys.modules, GATEWAY_MODULE, server)
-
+def test_the_route_records_the_durable_ids_beside_the_runtime_one(routes, store):
     assert app_signed_in_as(routes, person()).post(PATH, json={"session_id": SID}).status_code == 204
     assert store.take("", aliases=("durable-1",)) == SENDER
+
+
+def test_the_claim_is_keyed_by_the_runtime_id_only(routes, store):
+    assert app_signed_in_as(routes, person()).post(PATH, json={"session_id": SID}).status_code == 204
+    assert set(store.claims) == {SID}
 
 
 def test_the_route_is_inside_the_gated_prefix(routes):

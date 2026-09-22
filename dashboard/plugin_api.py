@@ -333,14 +333,20 @@ def _turn_claim():
 
 @router.post("/context/turn", status_code=204)
 async def context_turn(request: Request):
-    """Claim the next turn of a session for the person making this request.
+    """Claim the next model turn of a live session for the person asking.
 
     The body is `{"session_id": "<runtime session id>"}` and nothing else is
-    read from it. The identity is the verified dashboard login, spelled the way
-    the gateway spells `auth_user_id`. No disk, no outbound call and no lock
-    anybody else waits on, so it runs on the event loop.
+    read from it. The id must name a live runtime session in the dashboard's own
+    table — a session key or a durable id is refused with 404, never stored —
+    and the claim is keyed by that runtime id alone, with the record's durable
+    ids kept beside it as aliases. The identity is the verified dashboard
+    login, spelled the way the gateway spells `auth_user_id`. No disk, no
+    outbound call and no lock anybody else waits on, so it runs on the loop.
     """
     turn_claim, live_session = _turn_claim()
+    content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+    if content_type != "application/json":
+        raise HTTPException(status_code=415, detail="the body must be sent as application/json")
     try:
         body = await request.json()
     except Exception:
@@ -358,8 +364,11 @@ async def context_turn(request: Request):
         raise HTTPException(
             status_code=403, detail="this request is not signed in as a person, so there is no one to claim the turn for"
         )
-    aliases = live_session.LiveSessions().durable_ids(session_id)
-    turn_claim.shared().claim(session_id, identity, aliases)
+    sessions = live_session.LiveSessions()
+    record = sessions.runtime_record(session_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="no live session with that runtime id")
+    turn_claim.shared().claim(session_id, identity, sessions.durable_ids(record))
     return Response(status_code=204)
 
 

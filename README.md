@@ -264,11 +264,17 @@ submits it, over the dashboard, as the person signed in:
   the request Hermes authenticated. Nothing in the body can name anyone.
 - **`session_id` is the runtime id** — the one `session.create` and
   `session.resume` return and `prompt.submit` takes. A missing or malformed one
-  is a 400; a request that is not signed in as a person (a gateway without a
-  login, a service token) is a 403; an unauthenticated one never gets past
-  Hermes' own 401.
-- **One claim is one turn**, spent by that turn, ignored after 90 seconds. Two
-  people claiming the same session in that window: the later claim wins.
+  is a 400, and one that is not a live session on this dashboard — a session
+  key, a stored session id, a closed session — is a 404. A body not sent as
+  `application/json` is a 415; a request that is not signed in as a person (a
+  gateway without a login, a service token) is a 403; an unauthenticated one
+  never gets past Hermes' own 401.
+- **One claim is one model turn**, spent by that turn, ignored after 30
+  seconds. Two people claiming the same session in that window: the later
+  claim wins. Claim only for a `prompt.submit` that starts a model turn, never
+  for a slash command; `/me` spends any claim it finds.
+- **A claim replaces only a dashboard login.** A sender Hermes names as a
+  messaging platform's user or a bot is left as it is.
 - Nothing is written to disk; at most 256 sessions hold a claim at once.
 
 On a gateway with no authentication there is no identity to read anywhere, so it

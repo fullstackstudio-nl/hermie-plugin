@@ -889,24 +889,51 @@ and `pre_llm_call` asks for a claim before it asks anything else
   builds `auth_user_id`, so a claim and a hook sender are the same kind of
   string. A request that names no person — a gateway without a login, where the
   legacy token admits everybody as nobody, or a service token — is refused with
-  403 and claims nothing. Malformed input is a 400; an unauthenticated request
-  never reaches the handler, because the middleware answers 401 first.
+  403 and claims nothing. Malformed input is a 400, a body not sent as
+  `application/json` a 415; an unauthenticated request never reaches the
+  handler, because the middleware answers 401 first.
 - **Which id.** The app knows the runtime session id: the `session_id` that
   `session.create` and `session.resume` return and `prompt.submit` takes. A
   second window attaches to the same record, so both people submit with the
   same one. During the turn Hermes binds it as `HERMES_UI_SESSION_ID`, and that
-  is the exact match. The hook itself gets the agent's durable session id
-  (which moves when a session is compacted), and a session also has a durable
-  key; the route records both beside the runtime id, read from the live table
-  without taking its lock, and they are matched only when a turn has no runtime
-  id bound. They never override an exact answer: two windows can hold two
-  runtime sessions on one stored session, and a turn that knows its runtime id
-  must not spend a claim made for the other.
-- **One claim, one turn, 90 seconds.** `pre_llm_call` spends the claim it
-  uses. Building the prompt and `/me` look at it without spending it, so a
-  prompt built for this turn already describes the claimer and the hook then
-  has nothing to add. A claim no turn spent is ignored and dropped 90 seconds
-  after it was made.
+  is the exact match.
+
+  **Only a live runtime id is ever a key.** The route answers 404 unless the id
+  is a key of the dashboard's own session table, looked up directly and never
+  through `_session_for_key`, so a session key or a durable id sent in its
+  place is refused rather than stored. That is not tidiness: other platforms'
+  sessions have keys too (`agent:main:telegram:dm:…`), a messaging turn binds
+  no runtime id, and a claim stored under such a key would put the claimer's
+  section — and their name in `HERMES_SESSION_USER_*` — in front of somebody
+  else's Telegram turn.
+
+  The hook itself gets the agent's durable session id (which moves when a
+  session is compacted), and a session also has a durable key; the route reads
+  both off the live record it just found, without taking the table's lock, and
+  keeps them beside the claim as aliases. A turn with no runtime id bound is
+  matched through those recorded aliases and nothing else — its ids are never
+  compared with claim keys. The aliases never override an exact answer: two
+  windows can hold two runtime sessions on one stored session, and a turn that
+  knows its runtime id must not spend a claim made for the other.
+- **A claim stands in only for a dashboard login.** It exists to correct one
+  thing, the dashboard naming the opener as every turn's sender, so it replaces
+  a hook sender only when there is none or it is spelled as a dashboard login:
+  a provider prefix the dashboard signs people in with (its registry of sign-in
+  providers, read from `sys.modules`, never imported), the claimer's own or the
+  opener's. A messaging platform's user id or a bot's name is somebody Hermes
+  named correctly, and the claim is left unspent for the turn it was made for.
+- **One claim, one model turn, 30 seconds.** `pre_llm_call` spends the claim it
+  uses. Building the prompt looks at it without spending it, so a prompt built
+  for this turn already describes the claimer and the hook then has nothing to
+  add. `/me` reads it and then spends it, because no model turn follows a
+  command. A claim nothing spent is ignored and dropped 30 seconds after it was
+  made: the app claims immediately before it submits, so a claim is normally
+  spent within a second or two, and the window is kept as short as a slow
+  network allows because an unspent claim is the whole of the exposure below.
+- **The app claims for a model turn and nothing else.** A claim is for a
+  `prompt.submit` that starts a model turn. The app must not claim before a
+  slash command: a command other than `/me` is answered without `pre_llm_call`
+  and without passing through this plugin, so nothing would spend it.
 - **Last claim wins.** Two people claiming one session inside the window leave
   the later claim standing, and the next turn is resolved for that person. The
   gateway runs one turn per session at a time and the app claims immediately
@@ -916,10 +943,11 @@ and `pre_llm_call` asks for a claim before it asks anything else
   one person's claim and their submit, which is one round trip.
 - **Limits, stated.** A prompt that does not start a turn of its own — a busy
   session's input steered into the running turn — never reaches
-  `pre_llm_call`, so its claim is left for the next turn inside the window;
+  `pre_llm_call`, so its claim is left for the next turn inside the 30 seconds;
   every app turn claims first, so that next turn's own claim replaces it, and a
-  turn that claims nothing (an older app, a bot-to-bot delivery) can inherit
-  it. A prompt queued behind a long turn may start after its claim has expired,
+  turn from a client that claims nothing (Hermes' own dashboard or TUI, an older
+  app) can inherit it. The same holds for a slash command the app claimed for
+  against the rule above. A prompt queued behind a long turn may start after its claim has expired,
   and is then resolved as before. A turn run by an isolated compute worker
   (`dashboard.turn_isolation`, off by default) runs its hook in another process
   that has no store, and is resolved as before as well.
@@ -928,11 +956,15 @@ and `pre_llm_call` asks for a claim before it asks anything else
   Hermes imports this plugin for its hooks under one module name and the
   dashboard loads a second copy of the package for its routes, so module state
   would be two stores that never meet. The store lives in `sys.modules` under a
-  fixed, versioned name that both copies find.
+  fixed name that both copies find, one store per `SHAPE`: a copy that
+  disagrees about the store's shape gets a fresh store rather than methods from
+  a class it does not know, and any change to the store's shape bumps `SHAPE`.
 
 The capability is `context.turn_claim`. It is advertised wherever the context
 module is on, like the memory strings: whether the route is reachable is the
-dashboard's business, and an app that gets a 404 goes on without a claim.
+dashboard's business. An app that gets a 404 goes on without a claim — from a
+plugin without the route, or for a session that is not live on this dashboard,
+the answer is the same.
 
 ### The two spellings of one id
 
@@ -1321,9 +1353,10 @@ Unchanged from ADR-0017, with three differences, all of them reductions.
 - *A signed-in person can claim any session's next turn.* `context/turn` takes
   any session id, and a claim decides whose context section the next turn of
   that session carries. It cannot make a turn resolve to anybody but the caller
-  — the identity is the caller's own login — so the worst it does is put the
-  caller's own section in front of somebody else's turn, for one turn, within
-  90 seconds. That is the same trust every signed-in caller already has over
+  — the identity is the caller's own login — and only a live dashboard session
+  can be claimed, never another platform's, so the worst it does is put the
+  caller's own section in front of somebody else's dashboard turn, for one
+  turn, within 30 seconds. That is the same trust every signed-in caller already has over
   every route here. §4.
 - *`ui_meta` is per profile, not per user.* The app's key is per person now
   (`hermie-app:<user id>`), but `ui_meta` itself is not: every key on the
