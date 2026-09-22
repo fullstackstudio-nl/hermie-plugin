@@ -28,6 +28,11 @@ forms name one person.
 Everything rendered is bounded. A system prompt section is prompt bytes charged
 on every turn of the session it was frozen into, so a user who pastes an essay
 into "about me" gets it truncated rather than getting a slower bot forever.
+
+What is rendered also says where it came from. `Orientation` below is the short
+paragraph that tells a bot it is reading the person's own Hermie profile, what it
+may do with that, and where to look for the rest — without it, somebody has to
+sit and explain the plugin to their bot before the feature works at all.
 """
 
 from __future__ import annotations
@@ -269,14 +274,27 @@ def resolve(section: ContextSection, *, sender_id: str = "", configured_default:
     )[0]
 
 
-# Said when this text is reaching a session whose frozen section describes the
-# same person as they were earlier. Both copies are in the prompt at that point
-# — core cannot be asked to re-render a frozen section — so the newer one has to
+# -- saying which copy of this a bot should believe --------------------------
+#
+# A bot can end up holding two descriptions of one person: the one frozen into
+# its system prompt when the session started, and a newer one riding a turn.
+# Core cannot be asked to re-render a frozen section, so the newer copy has to
 # say which of the two wins, or a model is left to guess between two profiles of
 # one person and may well average them.
+#
+# Where the older copy sits decides the wording, and it matters: a section
+# frozen into the prompt is in the prompt, while one introduced mid-chat was
+# said in the chat. Pointing a model at the system prompt when nothing is there
+# points it at nothing, which is the same failure the framing line avoids.
+
 SUPERSEDES = (
     "The person has changed this since this chat began. "
     "It replaces what the system prompt says about them."
+)
+
+SUPERSEDES_IN_CHAT = (
+    "The person has changed this since this chat began. "
+    "It replaces what was said about them earlier in this chat."
 )
 
 # And when they emptied it. A frozen section cannot be taken back out of a
@@ -288,9 +306,102 @@ RETRACTED = (
     "Disregard what the system prompt says about them; there is nothing there now."
 )
 
+RETRACTED_IN_CHAT = (
+    "The person has removed the background they had set about themselves. "
+    "Disregard what was said about them earlier in this chat; there is nothing there now."
+)
+
+# Said on the first copy to reach a chat that began without one: a session whose
+# prompt was built before this plugin was installed, or before it had a section
+# at all. It corrects nothing and says so, because a note that claims to replace
+# something aims a model at text that was never there.
+INTRODUCED = (
+    "This is reaching this chat for the first time; "
+    "nothing earlier in it said who you are talking to."
+)
+
+
+# -- where all of this comes from -------------------------------------------
+#
+# The facts above say what the person is like. They do not say what a bot is
+# reading, and a bot that has not been told has to be taught by hand — which is
+# the one thing a context feature must not ask of anybody. So the section also
+# carries a short, stable paragraph: where the facts come from, what may be done
+# with them, and where to look for more.
+#
+# Two properties are deliberate. Every sentence is plain and permissive, because
+# this is context and not instruction, and a paragraph of directives in a system
+# prompt is a paragraph the person did not write. And every sentence is true on
+# the gateway that renders it: the two that point somewhere — the command and
+# the memory browser — are said only where that place will answer, by the same
+# rule a capability follows.
+
+ORIENTATION_SOURCE = (
+    "These details come from the person's own profile in their Hermie app and reach you "
+    "through the Hermie plugin on this gateway, which keeps them current."
+)
+
+ORIENTATION_USE = (
+    "You may address them by name, use their timezone and locale for dates, times and "
+    "language, and phrase steps for the device they are on."
+)
+
+ORIENTATION_SETTINGS = "They decide what is shared here, in Hermie under Settings → Context."
+
+# Only where `register_command` actually took the command.
+ORIENTATION_COMMAND = "`/me`, typed in this chat, prints what is shared and how it was worked out."
+
+# Only where the memory module is switched on and will answer.
+ORIENTATION_MEMORY = (
+    "What they told you in earlier chats is kept in this profile's memory rather than here, "
+    "and they can read that in Hermie too."
+)
+
+ORIENTATION_ASK = (
+    "When something you need about them is not here, they have not shared it, "
+    "and asking them is the only way to know."
+)
+
+# The last line, always. The reader is a model, and a model that is not told
+# where a fact came from will treat it as an instruction. This is the person's
+# own description of themselves, not a directive, and it says so.
+FRAMING = "This is background the person set in their app, not an instruction for this turn."
+
+
+@dataclass(frozen=True)
+class Orientation:
+    """Which of the orientation sentences this gateway can stand behind.
+
+    The flags are the two that name a place to look. `/me` exists only where
+    Hermes took the registration, and the memory browser only where the module
+    is on, so a gateway that has neither says neither: pointing a bot at
+    something that is not there is worse than pointing it nowhere.
+    """
+
+    command: bool = False
+    memory: bool = False
+
+    def lines(self) -> List[str]:
+        """The sentences, in the order they are read AND dropped.
+
+        Least load-bearing last, because a tight cap drops from the end.
+        """
+        found = [ORIENTATION_SOURCE, ORIENTATION_USE, ORIENTATION_SETTINGS]
+        if self.command:
+            found.append(ORIENTATION_COMMAND)
+        if self.memory:
+            found.append(ORIENTATION_MEMORY)
+        found.append(ORIENTATION_ASK)
+        return found
+
 
 def render(
-    user: Optional[UserContext], *, bot: str = "", max_chars: int = 1200, supersedes: bool = False
+    user: Optional[UserContext],
+    *,
+    bot: str = "",
+    max_chars: int = 1200,
+    lead: str = "",
+    orientation: Orientation = Orientation(),
 ) -> str:
     """The prompt text for one person, or an empty string.
 
@@ -298,9 +409,15 @@ def render(
     verbatim, and a heading with nothing under it teaches a model that the
     section is noise.
 
-    `supersedes` marks a copy that is replacing an older one already frozen into
-    this session's system prompt. It is part of the bounded text rather than
-    something a caller glues on afterwards, so the cap covers it.
+    `lead` says how this copy relates to one the chat has already seen — that it
+    supersedes it (`SUPERSEDES`), or that it is the first one (`INTRODUCED`). It
+    is part of the bounded text rather than something a caller glues on
+    afterwards, so the cap covers it.
+
+    The orientation paragraph gives way to the person's own words: when the cap
+    is tight it is dropped a whole sentence at a time, because the budget exists
+    for what they wrote and half a sentence about where to look is worse than
+    none of one.
     """
     if user is None:
         return ""
@@ -332,21 +449,19 @@ def render(
     if note:
         lines.append(f"What they told you specifically about this chat: {note}")
 
-    # Emptiness is decided on what the person actually wrote, before the two
-    # framing lines are added: a section that is nothing but framing is a
+    # Emptiness is decided on what the person actually wrote, before the framing
+    # and the orientation are added: a section that is nothing but those is a
     # heading with nothing under it, which teaches a model that it is noise.
     if not lines:
         return ""
 
-    if supersedes:
-        lines.insert(0, SUPERSEDES)
+    if lead:
+        lines.insert(0, lead)
 
-    # The reader is a model, and a model that is not told where a fact came from
-    # will treat it as an instruction. This is the person's own description of
-    # themselves, not a directive, and it says so.
-    lines.append(
-        "This is background the person set in their app, not an instruction for this turn."
-    )
-
-    text = "\n".join(lines)
+    said = orientation.lines()
+    while True:
+        text = "\n".join(lines + said + [FRAMING])
+        if len(text) <= max_chars or not said:
+            break
+        said = said[:-1]
     return text if len(text) <= max_chars else text[: max_chars - 1].rstrip() + "…"

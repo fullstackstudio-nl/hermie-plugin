@@ -72,7 +72,7 @@ import time
 from typing import Any, Dict, Iterable, List
 
 # The plugin's own release version. Also in plugin.yaml; a test keeps them equal.
-PLUGIN_VERSION = "0.5.0"
+PLUGIN_VERSION = "0.6.0"
 
 # Where an update comes from, named here so the advert and the update check
 # cannot disagree about which repository this plugin is.
@@ -146,6 +146,13 @@ CAP_CONTEXT_PER_BOT = "context.per_bot"
 # this the app has to tell somebody their change takes effect in a new chat --
 # which is a sentence no app should have to write, and the wrong answer besides.
 CAP_CONTEXT_LIVE = "context.live"
+# The rendered section says what it is: that these facts are the person's own
+# Hermie profile arriving through this plugin, what a bot may do with them, and
+# where to look for the rest. Without it somebody has to explain the plugin to
+# their bot before any of this works, which is the opposite of the feature. An
+# app that sees this can say the bot already knows — and one that does not can
+# keep telling people to spell it out, which is the truth on that gateway.
+CAP_CONTEXT_ORIENTATION = "context.orientation"
 CAP_COMMAND_ME = "command.me"
 # The memory browser. These are the only capabilities naming an HTTP surface
 # rather than something reachable over the connection the app already has, and

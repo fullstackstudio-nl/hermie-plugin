@@ -102,6 +102,7 @@ that cannot work is worse than one that is absent.
 | `context.system_prompt` | context is put into the bot's system prompt |
 | `context.per_bot` | a per-bot note is rendered for the bot it names |
 | `context.live` | a context edit reaches an **open** chat on its next turn |
+| `context.orientation` | the section says where it came from and where to look for more |
 | `command.me` | `/me` was accepted by this gateway |
 | `plugin.update_check` | the advert carries the newest release tag |
 | `memory.browse` | a profile's memory can be read over the dashboard's plugin routes |
@@ -208,12 +209,36 @@ device model and OS, app version, timezone and locale, and optional per-bot
 notes. The plugin puts that in the bot's system prompt once per session, so it
 does not appear in the transcript and does not grow with the conversation.
 
+**The section says what it is.** A bot handed facts and not told where they came
+from has to be taught by hand that the person has a profile at all, which is the
+opposite of the feature. So the same section carries a short, fixed paragraph:
+that these details are the person's own profile in their Hermie app, arriving
+through this plugin and kept current; that the name, the timezone and locale and
+the device are there to be used; that `/me` prints what is being shared and
+Settings → Context is where the person changes it; and that anything not there
+is something to ask about rather than assume. The two sentences that point
+somewhere — `/me` and the memory browser — are said only on a gateway where that
+place answers. It is context, not instruction, and it reads that way.
+
+The paragraph gives way before the person's own words do: when the whole section
+is up against `context.max_chars` it is dropped a whole sentence at a time, last
+sentence first, because half a sentence about where to look is worse than none
+and the budget is there for what somebody wrote about themselves.
+
 **Changing it reaches a chat that is already open.** Hermes renders a plugin's
 prompt section once per session and then replays it, so an edit made mid-chat
 would otherwise wait for the next one. Instead the turn after the edit carries
 the new text, saying that it replaces what the prompt says; emptying it is
 retracted in words, since the frozen copy cannot be taken back out. On every
 other turn this costs one `stat` of `profile.yaml` and reads nothing.
+
+**A chat that was already open when the plugin arrived learns too.** Hermes
+builds a session's prompt once, so a Bot Chat that started before the plugin was
+installed carries no section and never will — no edit can top up a copy that is
+not there. The next turn of such a chat carries the whole thing once instead,
+framed the same way and saying it is new here rather than a correction. Once is
+the point: it is remembered exactly as a frozen section is, under the same
+512-session bound, so it cannot turn into something that rides every turn.
 
 On a gateway with authentication in front of it the plugin works out **which**
 person sent a turn and picks their context. It asks three places in order: the

@@ -143,6 +143,7 @@ def test_loading_publishes_an_advert_the_app_can_read(tmp_path, monkeypatch):
     assert contract.CAP_PUSH_MUTE in caps
     assert contract.CAP_PUSH_SEEN_PER_CHAT in caps
     assert contract.CAP_UIMETA_PER_USER in caps
+    assert contract.CAP_CONTEXT_ORIENTATION in caps
     assert advert["version"] == contract.PLUGIN_VERSION
     assert advert["modules"]["push"] == "on"
     assert advert["modules"]["presence"] == "planned"
@@ -420,13 +421,24 @@ def test_the_per_turn_path_stays_silent_for_the_person_already_in_the_prompt(tmp
     assert ctx.fire("pre_llm_call", session_id="s1", sender_id="u1") == [None]
 
 
-def test_an_ungated_gateway_names_nobody_and_adds_nothing(tmp_path, monkeypatch):
+def test_a_session_core_never_rendered_for_is_introduced_once(tmp_path, monkeypatch):
+    """The chat that was already open when the plugin arrived.
+
+    Core builds a session's prompt once and replays it, so a session that
+    started before this plugin existed has no section and never will. Nobody is
+    named on this ungated gateway either, which is the install this is for: the
+    one registered person is who the chat has to meet. It fires on that chat's
+    next turn and not on the ones after it.
+    """
     home, ctx = gateway(
         tmp_path, app_meta=app_meta_with(context_users={"u1": {"displayName": "Sebas"}})
     )
     monkeypatch.setattr(uimeta, "hermes_home", lambda: home)
     hermie_plugin.register(ctx)
 
+    first = ctx.fire("pre_llm_call", session_id="s1", sender_id="")[0]
+    assert "Sebas" in first["context"]
+    assert "Hermie app" in first["context"], "the bot was told the facts but not where they live"
     assert ctx.fire("pre_llm_call", session_id="s1", sender_id="") == [None]
 
 

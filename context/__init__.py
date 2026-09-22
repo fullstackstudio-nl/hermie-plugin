@@ -24,15 +24,28 @@ sessions, which stamps the login on the record and sits in this very process
 
 So the module uses both, and uses the expensive one as little as possible: the
 frozen section carries the resolved default user, and `pre_llm_call` contributes
-text only when the person actually sending this turn is somebody else. On the
-single-user gateway that is every Hermie install today, the second path never
-fires and the per-turn cost is zero.
+text only where that section cannot cover the turn — somebody else is sending
+it, what it says has changed underneath them, or there is no frozen section at
+all because the chat is older than the plugin. On the single-user gateway that
+is every Hermie install today, the last of those fires once on a chat that
+predates the install and the others never fire, so the per-turn cost settles
+back to zero.
 
-Two limits are real and are written down in DESIGN.md rather than papered over:
-an ungated gateway names nobody anywhere — no `auth_user_id`, nothing bound in
-the session variables — so only the default applies; and a section frozen at
-session start does not change when the person edits their profile, so an edit
-reaches a long-running Bot Chat on its next session.
+One limit is real and is written down in DESIGN.md rather than papered over: an
+ungated gateway names nobody anywhere — no `auth_user_id`, nothing bound in the
+session variables — so only the default applies.
+
+The other thing a frozen section cannot do is change, and core will not render
+one twice. The per-turn path carries that instead, in two shapes: `refresh` tops
+up a session whose section has gone stale under a person who is still typing
+into it, and `introduce` says all of it once to a session that never had a
+section at all — the chat that was already open when the plugin arrived, which
+would otherwise never learn who it is talking to.
+
+What the text says is `render.py`'s business, including the paragraph that tells
+a bot where any of this came from and where to look for more. This module
+decides only which parts of that paragraph this gateway can stand behind, in
+`orientation` below.
 
 `pre_llm_call` does one more thing, in `session_vars.py`: when Hermes' own
 `HERMES_SESSION_USER_*` variables are empty and this module can say who is
@@ -53,8 +66,13 @@ from .render import (
     BY_HOOK,
     BY_LIVE_SESSION,
     BY_SESSION_VARS,
+    INTRODUCED,
     RETRACTED,
+    RETRACTED_IN_CHAT,
+    SUPERSEDES,
+    SUPERSEDES_IN_CHAT,
     ContextSection,
+    Orientation,
     read_sections,
     render,
     resolve,
@@ -93,11 +111,18 @@ class Frozen:
     to "did it change?" is a comparison rather than a guess — a write that
     touches somebody else's push registration moves the stamp without changing
     a word of this, and that must not cost a turn an injection.
+
+    `introduced` says the text never reached the system prompt at all: it was
+    said in the chat by `introduce`, because this session's prompt was built
+    without a section. The record is otherwise identical, and the flag is only
+    read to word the next note correctly — "it replaces what the system prompt
+    says" is a sentence that must not be said about a prompt that says nothing.
     """
 
     user_id: str
     text: str
     stamp: Tuple[int, int]
+    introduced: bool = False
 
 
 class ContextModule:
@@ -126,6 +151,28 @@ class ContextModule:
     @property
     def fills_session_vars(self) -> bool:
         return self.runtime.config("context.session_vars", True) is not False
+
+    @property
+    def memory_readable(self) -> bool:
+        """Whether this gateway's memory browser will actually answer.
+
+        Both switches, read the way `memory/__init__.py` reads them. It gates
+        one sentence of the orientation, by the rule a capability follows: a bot
+        is pointed at the memory browser only where there is one.
+        """
+        return (
+            self.runtime.config("modules.memory", True) is not False
+            and self.runtime.config("memory.browse", True) is not False
+        )
+
+    @property
+    def orientation(self) -> Orientation:
+        """Which orientation sentences this gateway can stand behind.
+
+        Every path that renders passes this, so the paragraph is written once
+        and a bot reads the same one however the text reached it.
+        """
+        return Orientation(command=self.command_registered, memory=self.memory_readable)
 
     def session_sender(self) -> str:
         """The login the gateway bound into the session variables, or nothing.
@@ -185,7 +232,13 @@ class ContextModule:
         # per-turn hook is registered below whatever else failed, and it is the
         # half that carries an edit. A gateway whose prompt section never
         # registered at all is a gateway where every turn is a live one.
-        found = [contract.CAP_CONTEXT_PROMPT, contract.CAP_CONTEXT_LIVE]
+        found = [
+            contract.CAP_CONTEXT_PROMPT,
+            contract.CAP_CONTEXT_LIVE,
+            # Rendered by every path this module has, so it is claimed wherever
+            # the module is on at all.
+            contract.CAP_CONTEXT_ORIENTATION,
+        ]
         if any(user.per_bot for user in self.section().users.values()):
             found.append(contract.CAP_CONTEXT_PER_BOT)
         if self.command_registered:
@@ -200,14 +253,23 @@ class ContextModule:
 
     # -- the frozen section --------------------------------------------------
 
-    def remember(self, session_id: str, user_id: str, text: str, stamp: Tuple[int, int]) -> None:
-        """Record what this session's prompt now says about a person."""
+    def remember(
+        self,
+        session_id: str,
+        user_id: str,
+        text: str,
+        stamp: Tuple[int, int],
+        introduced: bool = False,
+    ) -> None:
+        """Record what this session now knows about a person."""
         with self.lock:
             # Re-inserting rather than assigning moves this session to the back
             # of the queue, so the one evicted is the one nothing has touched
             # for longest rather than the one that merely started earliest.
             self.frozen.pop(session_id, None)
-            self.frozen[session_id] = Frozen(user_id=user_id, text=text, stamp=stamp)
+            self.frozen[session_id] = Frozen(
+                user_id=user_id, text=text, stamp=stamp, introduced=introduced
+            )
             while len(self.frozen) > FROZEN_SESSIONS:
                 self.frozen.pop(next(iter(self.frozen)))
 
@@ -239,7 +301,7 @@ class ContextModule:
                 sender_id=self.sender(session_id=str(session_info.get("session_id") or "")),
                 configured_default=self.configured_default,
             )
-            text = render(user, bot=bot, max_chars=self.max_chars)
+            text = render(user, bot=bot, max_chars=self.max_chars, orientation=self.orientation)
             if user is not None:
                 self.remember(str(session_info.get("session_id") or ""), user.user_id, text, stamp)
             return text
@@ -307,39 +369,98 @@ class ContextModule:
             return None
 
         user = resolve(section_of(), sender_id=sender_id, configured_default=self.configured_default)
-        text = render(user, bot=self.runtime.bot_name(), max_chars=self.max_chars)
+        text = render(
+            user, bot=self.runtime.bot_name(), max_chars=self.max_chars, orientation=self.orientation
+        )
         if text == frozen.text:
             # The file moved for something else entirely — a push registration,
             # a heartbeat, another person's bag. Remember the new stamp so this
             # is looked at once rather than on every turn from here on.
-            self.remember(session_id, frozen.user_id, frozen.text, stamp)
+            self.remember(session_id, frozen.user_id, frozen.text, stamp, frozen.introduced)
             return None
 
-        self.remember(session_id, user.user_id if user is not None else frozen.user_id, text, stamp)
+        self.remember(
+            session_id,
+            user.user_id if user is not None else frozen.user_id,
+            text,
+            stamp,
+            frozen.introduced,
+        )
         if text:
-            # "It replaces what the prompt says" is only true when the prompt
-            # says something. A section that rendered empty at session start put
-            # no copy in the prompt, so this is the first one rather than a
-            # correction, and claiming otherwise points a model at nothing.
+            # "It replaces what you were told" is only true when something was.
+            # A section that rendered empty at session start put no copy
+            # anywhere, so this is the first one rather than a correction, and
+            # claiming otherwise points a model at nothing. Where the older copy
+            # sits decides the rest of the sentence: an introduced one was said
+            # in the chat, and the system prompt never carried it.
             return {"context": render(
                 user,
                 bot=self.runtime.bot_name(),
                 max_chars=self.max_chars,
-                supersedes=bool(frozen.text),
+                lead=self.beaten(frozen) if frozen.text else "",
+                orientation=self.orientation,
             )}
         if not frozen.text:
-            # Nothing was frozen and nothing is there now. Nothing to retract.
+            # Nothing was said and nothing is there now. Nothing to retract.
             return None
-        # They emptied it. The frozen copy cannot be taken back out of the
-        # system prompt, so the only honest thing left is to say it is gone.
-        return {"context": RETRACTED}
+        # They emptied it. The older copy cannot be taken back out of a prompt
+        # or a transcript, so the only honest thing left is to say it is gone.
+        return {"context": RETRACTED_IN_CHAT if frozen.introduced else RETRACTED}
+
+    @staticmethod
+    def beaten(frozen: Frozen) -> str:
+        """The note that says this copy wins, worded for where the older one is."""
+        return SUPERSEDES_IN_CHAT if frozen.introduced else SUPERSEDES
+
+    # -- a chat that began before any of this --------------------------------
+
+    def introduce(
+        self, session_id: str, sender_id: str, section_of: Callable[[], ContextSection]
+    ) -> Optional[Dict[str, str]]:
+        """A session whose system prompt was built without this section at all.
+
+        A chat started before the plugin was installed — or before it had a
+        prompt section — carries nothing about the person, and core will not
+        build that prompt again for the life of the session. `refresh` cannot
+        help: it tops up a copy, and there is no copy. So the next turn of such
+        a chat introduces the person instead, with the same framing as every
+        other copy and a line saying it replaces nothing.
+
+        Once, and that is the whole difficulty. Whatever this returns rides the
+        user message on the turn it fires, so a decision nothing remembers is a
+        decision taken again on every turn for the rest of the chat. The record
+        it leaves is the same one the frozen section leaves — same shape, same
+        `FROZEN_SESSIONS` bound — and it is written even when nothing was said,
+        so a gateway with nobody registered stops asking rather than resolving
+        for ever. A session Hermes names no id for shares one record with every
+        other such session, which is the bound the frozen record already has.
+        """
+        # Before the read, for the reason `render_section` gives.
+        stamp = self.runtime.app_stamp()
+        user = resolve(section_of(), sender_id=sender_id, configured_default=self.configured_default)
+        text = render(
+            user, bot=self.runtime.bot_name(), max_chars=self.max_chars, orientation=self.orientation
+        )
+        # The plain text is what this chat now knows, so a later top-up compares
+        # like with like; the lead line belongs to this one turn only.
+        self.remember(session_id, user.user_id if user is not None else "", text, stamp, True)
+        if not text:
+            return None
+        return {"context": render(
+            user,
+            bot=self.runtime.bot_name(),
+            max_chars=self.max_chars,
+            lead=INTRODUCED,
+            orientation=self.orientation,
+        )}
 
     def on_pre_llm_call(self, **kwargs: Any) -> Optional[Dict[str, str]]:
         """Contribute context the frozen section does not already carry.
 
-        Two ways it can fail to: the person sending this turn is not the one
-        the section describes, or they are that person and have since changed
-        what it says.
+        Three ways it can fail to: there is no frozen section at all, because
+        this chat began before there was one; the person sending this turn is
+        not the one the section describes; or they are that person and have
+        since changed what it says.
         """
         try:
             session_id = str(kwargs.get("session_id") or "")
@@ -356,24 +477,29 @@ class ContextModule:
             self.fill_session_vars(sender_id, section_of)
 
             frozen = self.frozen_section(session_id)
+            if frozen is None:
+                # Nothing was ever frozen for this session and nothing ever
+                # will be. See `introduce`: this is the long-running chat that
+                # predates the plugin, and it fires once.
+                return self.introduce(session_id, sender_id, section_of)
+
             # "Covers this turn" includes the turn that names nobody: an
             # ungated gateway is the single-user install, where the section
             # resolved a person without being told one and an edit to that
             # person is exactly the edit that must get through.
-            if frozen is not None and (not sender_id or same_user(frozen.user_id, sender_id)):
+            if not sender_id or same_user(frozen.user_id, sender_id):
                 return self.refresh(session_id, frozen, sender_id, section_of)
-
-            if not sender_id:
-                # Nobody named, and no section to be stale. There is nothing
-                # this path could work out that the frozen one did not.
-                return None
-            already = frozen.user_id if frozen is not None else ""
 
             section = section_of()
             user = resolve(section, sender_id=sender_id, configured_default=self.configured_default)
-            if user is None or user.user_id == already:
+            if user is None or user.user_id == frozen.user_id:
                 return None
-            text = render(user, bot=self.runtime.bot_name(), max_chars=self.max_chars)
+            text = render(
+                user,
+                bot=self.runtime.bot_name(),
+                max_chars=self.max_chars,
+                orientation=self.orientation,
+            )
             return {"context": text} if text else None
         except Exception as exc:
             logger.warning("hermie: could not add per-sender context: %s", exc)

@@ -8,6 +8,36 @@ people.
 
 ### Added
 
+- `context.orientation` — the rendered section now says what it is. A bot was
+  told the facts about the person and nothing about where they came from, so
+  somebody had to sit and explain the plugin to their bot before the feature
+  worked at all. The section carries a short fixed paragraph instead: that these
+  details are the person's own profile in their Hermie app, arriving through
+  this plugin and kept current; that the name, the timezone and locale, and the
+  device are there to be used; that `/me` prints what is being shared and
+  Settings → Context is where the person changes it; that earlier chats are in
+  the profile's memory rather than here; and that anything missing is something
+  to ask about. It is permissive throughout, because it is context and not
+  instruction. The two sentences that point somewhere are said only where that
+  place answers — `/me` needs the registration Hermes can refuse, the memory
+  line needs the memory module switched on — which is the capability rule
+  applied to prose. Written in one place, so every path renders the same
+  paragraph.
+
+- **A chat that was already open when the plugin arrived learns who it is
+  talking to.** `context.live` tops up a frozen section that has gone stale, but
+  a session whose prompt was built before the plugin existed has no section to
+  top up and core will never build that prompt again — so the longest-running
+  Bot Chat was the one place the person stayed a stranger. Its next turn now
+  carries the whole section once, with a line saying it is reaching this chat
+  for the first time and replaces nothing. Once is the point, since anything
+  returned there rides the user message: it leaves the same record a frozen
+  section leaves, under the same 512-session bound, even when nothing was said,
+  so a gateway with nobody registered stops asking rather than resolving on
+  every turn. A session that never had a section and then gets an edit is told
+  that the newer copy beats what was said earlier *in the chat* — the system
+  prompt, on that session, says nothing to beat.
+
 - `push.session_kind` — a payload says whether its session is the bot's
   canonical chat, a branch, or neither, so a tap can open the right conversation
   now that a bot has more than one. Read from the session's title, the same

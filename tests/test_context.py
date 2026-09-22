@@ -1,7 +1,9 @@
 """Whose context, and what it costs."""
 
 from hermie_plugin.context.render import (
+    FRAMING,
     ContextSection,
+    Orientation,
     UserContext,
     read_section,
     read_sections,
@@ -80,6 +82,82 @@ def test_the_rendering_says_it_is_background_not_an_instruction():
     """A model that is not told where a fact came from treats it as a directive."""
     text = render(read_section(bag({"u1": user()})).users["u1"])
     assert "not an instruction" in text
+
+
+# -- and says where it came from ---------------------------------------------
+#
+# A bot that is told facts and not told what they are has to be taught by hand
+# that the person has a profile, that it lives in their app, and that there is
+# more of it elsewhere. That is the one thing this feature must not ask for.
+
+
+def test_the_rendering_says_where_the_facts_came_from():
+    text = render(read_section(bag({"u1": user()})).users["u1"])
+    assert "Hermie app" in text
+    assert "Hermie plugin on this gateway" in text
+    assert "Settings → Context" in text
+
+
+def test_the_rendering_says_what_may_be_done_with_them():
+    text = render(read_section(bag({"u1": user()})).users["u1"])
+    assert "address them by name" in text
+    assert "timezone and locale" in text
+    assert "the device they are on" in text
+
+
+def test_it_says_what_to_do_when_something_is_missing():
+    assert "asking them" in render(read_section(bag({"u1": user()})).users["u1"])
+
+
+def test_a_pointer_is_given_only_where_it_leads_somewhere():
+    """`/me` and the memory browser exist on some gateways and not on others."""
+    person = read_section(bag({"u1": user()})).users["u1"]
+
+    plain = render(person)
+    assert "/me" not in plain
+    assert "memory" not in plain
+
+    both = render(person, orientation=Orientation(command=True, memory=True))
+    assert "`/me`" in both
+    assert "memory" in both
+
+
+def test_the_paragraph_is_written_in_one_place():
+    """The renderer quotes the sentences; it does not spell them again."""
+    wanted = Orientation(command=True, memory=True)
+    text = render(read_section(bag({"u1": user()})).users["u1"], orientation=wanted)
+    for sentence in wanted.lines():
+        assert sentence in text
+
+
+def test_a_tight_cap_drops_a_whole_sentence_rather_than_cutting_one():
+    """Half a sentence about where to look is worse than none of one."""
+    person = read_section(bag({"u1": user()})).users["u1"]
+    wide = render(person, orientation=Orientation(command=True, memory=True), max_chars=4000)
+    assert wide.endswith(FRAMING)
+
+    tight = render(person, orientation=Orientation(command=True, memory=True), max_chars=len(wide) - 60)
+    assert len(tight) <= len(wide) - 60
+    assert tight.endswith(FRAMING)
+    assert "…" not in tight
+    assert len(tight.split("\n")) < len(wide.split("\n"))
+    for line in tight.split("\n"):
+        assert line in wide.split("\n"), "a line was cut rather than dropped"
+
+
+def test_the_persons_own_words_are_what_the_budget_is_for():
+    """The paragraph gives way first; it is the same on every gateway."""
+    person = read_section(bag({"u1": user(about="x" * 600)})).users["u1"]
+    text = render(person, max_chars=900)
+
+    assert len(text) <= 900
+    assert "x" * 600 in text
+
+
+def test_a_lead_line_is_inside_the_cap_like_everything_else():
+    person = read_section(bag({"u1": user()})).users["u1"]
+    assert render(person, lead="Read this first.", max_chars=120).startswith("Read this first.")
+    assert len(render(person, lead="Read this first.", max_chars=120)) <= 120
 
 
 def test_nobody_renders_to_nothing():

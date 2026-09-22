@@ -669,9 +669,12 @@ message on **every turn** it fires.
 
 So the module uses both and uses the expensive one as rarely as possible: the
 frozen section carries the resolved default user, and `pre_llm_call` contributes
-text only when the person sending this turn is somebody else. On the single-user
-gateway that every Hermie install is today, the second path never fires and the
-per-turn cost is zero.
+text only where that section cannot cover the turn — the person sending it is
+somebody else, what it says has changed underneath them, or there is no frozen
+section at all because the chat is older than the plugin. On the single-user
+gateway that every Hermie install is today, the last of those fires once on each
+chat that predates the install and the others never fire, so the per-turn cost
+settles back to zero.
 
 ### Does the plugin know who sent the prompt?
 
@@ -752,6 +755,36 @@ redundant injection on a chat nobody has touched since.
 
 The capability is `context.live`. Without it the app has to say "this takes
 effect in your next chat", which is a sentence no app should have to write.
+
+### A chat that began before the section existed
+
+The same constraint has a second half, and it is the older one. A session whose
+prompt was built before the plugin was installed — or before it had a section —
+has no frozen copy at all, and core will not build that prompt again for the
+life of the session. `refresh` cannot help: it tops up a copy, and there is
+none. A Bot Chat that has been open for weeks would stay the one place where the
+person is a stranger, however carefully the app filled the profile in.
+
+So the next turn of such a session says the whole thing once. It is the same
+text, rendered the same way, with one line in front of it saying that it is
+reaching this chat for the first time and replaces nothing — the mirror of the
+superseding note, and for the same reason: pointing a model at a correction it
+cannot find is pointing it at nothing.
+
+Once is the difficulty, not the saying. Whatever a `pre_llm_call` callback
+returns rides the user message on the turn it fires, so a decision nothing
+remembers is a decision taken again on every turn for the rest of the chat. The
+introduction therefore leaves the same record a frozen section leaves — resolved
+user, text, `profile.yaml` stamp, capped at 512 sessions — and leaves it even
+when nothing was said, so a gateway with nobody registered stops asking instead
+of resolving for ever. From the turn after, the chat is on the ordinary stale
+check: one `stat`, and nothing else until something moves.
+
+The record carries one more bit, which is where the older copy sits. A frozen
+section is in the system prompt; an introduced one was said in the chat. The
+notes that follow it are worded accordingly — "it replaces what was said about
+them earlier in this chat", not "what the system prompt says" — because on an
+introduced session the prompt says nothing at all.
 
 ### Resolution order
 
@@ -896,6 +929,34 @@ the answer is bounded. The capability `command.me` is advertised only when
 Hermes actually took the registration — core answers `None` when the name is
 already taken, and a capability names what is there, not what shipped.
 
+### Saying where the facts came from
+
+The facts say what the person is like. They do not say what a bot is reading,
+and until this version a bot had to be told by hand that the person has a
+profile, that it lives in their app, that a plugin carries it and that there is
+more of it elsewhere. A feature whose whole job is to save somebody that
+explanation cannot require it.
+
+So the section carries a short, fixed paragraph of its own, in this order:
+
+1. where these details come from — the person's own profile in their Hermie
+   app, reaching the bot through this plugin, kept current;
+2. what may be done with them — the name, the timezone and locale for dates and
+   language, the device for phrasing;
+3. who decides what is in them — the person, in Hermie under Settings → Context;
+4. `/me`, which prints what is being shared and how it was worked out;
+5. the profile's memory, which holds what they said in earlier chats;
+6. and that anything missing is something they have not shared, so asking is the
+   only way to know.
+
+Two rules keep it honest. Every sentence is permissive rather than directive —
+it is context, and a paragraph of orders in a system prompt is a paragraph the
+person did not write. And the two sentences that point somewhere are said only
+where that place will answer: (4) needs the command registration Hermes may
+refuse, (5) needs the memory module switched on, and a bot pointed at something
+that is not there is worse off than one pointed nowhere. That is the capability
+rule applied to prose. The capability is `context.orientation`.
+
 ### Bounding
 
 Per-field caps first (display name 80, about 600, per-bot note 400), then a
@@ -904,6 +965,12 @@ flattened, so one field cannot become twenty lines. The rendered text ends by
 saying it is background the person set in their app and not an instruction for
 this turn — a model that is not told where a fact came from will treat it as a
 directive.
+
+Under a tight cap the orientation paragraph is what gives way, a whole sentence
+at a time and from the end, before anything the person wrote is touched. Half a
+sentence about where to look is worse than none of one, and the budget exists
+for their own words: on a section that was already at the cap before this
+version, the same bytes come out.
 
 ---
 
