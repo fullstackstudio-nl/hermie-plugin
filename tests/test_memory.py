@@ -16,6 +16,11 @@ because Hermes is not importable here. They are about the plugin's own contract
 with those modules — that it validates before resolving, that it sets the home
 override and resets it, that it never builds a path itself — which is exactly
 the part a real gateway would not tell us about until it was too late.
+
+The raw side of `browse.py` is pure too, and the tests for it are about telling
+three kinds of nothing apart: a file that is absent, a file that is there and
+bare, and a backend that cannot be listed at all. Reading real files through the
+route is in `test_memory_routes.py`, where there is a filesystem to read.
 """
 
 import sys
@@ -329,6 +334,102 @@ def test_the_delimiter_matches_the_one_hermes_uses():
     assert memory.ENTRY_DELIMITER == ENTRY_DELIMITER
 
 
+# -- a document as stored -----------------------------------------------------
+
+
+def test_a_document_carries_the_file_and_the_name_it_has_on_disk():
+    answer = browse.raw_document("user", "a line\n§\nanother\n")
+
+    assert (answer["id"], answer["label"]) == ("user", "USER.md")
+    assert answer["content"] == "a line\n§\nanother\n", "the delimiters are the point"
+    assert (answer["chars"], answer["truncated"]) == (len("a line\n§\nanother\n"), False)
+
+
+def test_a_document_that_is_cut_still_reports_its_real_length():
+    """Otherwise a runaway file reads as small on the one occasion it matters."""
+    answer = browse.raw_document("memory", "x" * 50, limit=10)
+
+    assert answer["content"] == "x" * 10
+    assert (answer["chars"], answer["truncated"]) == (50, True)
+
+
+def test_a_document_exactly_at_the_limit_is_not_called_truncated():
+    assert browse.raw_document("memory", "x" * 10, limit=10)["truncated"] is False
+
+
+def test_the_builtin_backend_reads_in_the_order_a_person_reads():
+    backend = browse.builtin_backend({"user": "u", "memory": "m"}, editable=True)
+
+    assert [document["id"] for document in backend["documents"]] == ["memory", "user"]
+    assert (backend["name"], backend["available"], backend["editable"]) == ("builtin", True, True)
+    assert backend["note"] is None
+
+
+def test_a_file_that_is_not_there_is_absent_rather_than_empty():
+    """"There is no file" and "the file is bare" send a person to different places."""
+    missing = browse.builtin_backend({"memory": "m"}, editable=False)
+    bare = browse.builtin_backend({"memory": "m", "user": ""}, editable=False)
+
+    assert [document["id"] for document in missing["documents"]] == ["memory"]
+    assert [document["id"] for document in bare["documents"]] == ["memory", "user"]
+    assert bare["documents"][1]["content"] == "" and bare["documents"][1]["chars"] == 0
+
+
+def test_a_file_that_cannot_be_read_is_named_rather_than_shown_as_empty():
+    backend = browse.builtin_backend({"memory": "m"}, editable=False, unreadable=["user"])
+
+    assert "USER.md" in backend["note"]
+    assert [document["id"] for document in backend["documents"]] == ["memory"]
+
+
+def test_the_builtin_backend_is_read_only_when_editing_is_off():
+    assert browse.builtin_backend({}, editable=False)["editable"] is False
+
+
+def test_a_provider_that_is_set_up_is_available_and_says_it_cannot_be_listed():
+    backend = browse.external_backend("mem0", label="mem0 (cloud)")
+
+    assert (backend["label"], backend["available"], backend["documents"]) == ("mem0 (cloud)", True, [])
+    assert "no call that lists" in backend["note"]
+    assert backend["editable"] is False, "no route writes a whole document, for any backend"
+
+
+def test_a_provider_that_is_not_configured_is_not_available():
+    """Configured-and-unlistable is somewhere to look; this is something to do."""
+    backend = browse.external_backend("mem0", configured=False)
+
+    assert backend["available"] is False
+    assert "not configured" in backend["note"]
+
+
+def test_a_provider_that_is_not_installed_says_that_instead():
+    backend = browse.external_backend("zep", installed=False)
+
+    assert backend["available"] is False and "not installed" in backend["note"]
+
+
+def test_a_provider_with_no_description_is_labelled_by_its_name():
+    assert browse.external_backend("zep")["label"] == "zep"
+
+
+def test_the_raw_answer_names_the_profile_it_read():
+    answer = browse.raw("jurist", [browse.external_backend("mem0")])
+
+    assert answer["profile"] == "jurist"
+    assert [backend["name"] for backend in answer["backends"]] == ["mem0"]
+
+
+def test_the_filenames_are_the_ones_the_store_writes():
+    """A copy that drifted would show a file nothing has written since."""
+    try:
+        from tools.memory_tool_store import MemoryStore
+    except Exception:
+        pytest.skip("hermes is not importable here")
+    import hermie_plugin.memory as memory
+
+    assert {target: MemoryStore._path_for(target).name for target in browse.TARGETS} == memory.RAW_FILENAMES
+
+
 # -- providers ---------------------------------------------------------------
 
 
@@ -353,6 +454,57 @@ def test_the_builtin_is_listed_even_when_nothing_else_can_be(hermes):
     assert memory.providers()[0]["name"] == "builtin"
 
 
+def discovering(monkeypatch, rows):
+    web_memory = types.ModuleType("hermes_cli.web_server_memory")
+    web_memory._discover_memory_provider_statuses = lambda: rows
+    monkeypatch.setitem(sys.modules, "hermes_cli.web_server_memory", web_memory)
+
+
+def test_a_raw_backend_is_available_only_where_this_gateway_could_use_it(hermes, monkeypatch):
+    """`list` reports what exists; `raw` is asked what is stored, which is narrower."""
+    discovering(
+        monkeypatch,
+        [
+            {"name": "mem0", "description": "mem0 (cloud)", "available": True, "configured": True},
+            {"name": "zep", "description": "Zep", "available": True, "configured": False},
+            {"name": "other", "description": "Other", "available": False, "configured": True},
+        ],
+    )
+    import hermie_plugin.memory as memory
+
+    rows = {row["name"]: row for row in memory.external_backends()}
+
+    assert rows["mem0"]["available"] is True and rows["mem0"]["label"] == "mem0 (cloud)"
+    assert rows["zep"]["available"] is False and rows["other"]["available"] is False
+    assert all(row["documents"] == [] and row["note"] for row in rows.values())
+
+
+def test_a_gateway_too_old_to_say_whether_a_provider_is_configured_is_taken_at_its_word(
+    hermes, monkeypatch
+):
+    discovering(monkeypatch, [{"name": "mem0", "description": "mem0", "available": True}])
+    import hermie_plugin.memory as memory
+
+    assert memory.external_backends()[0]["available"] is True
+
+
+def test_the_builtin_is_not_reported_twice_when_the_discovery_names_it(hermes, monkeypatch):
+    discovering(monkeypatch, [{"name": "builtin", "available": True}])
+    import hermie_plugin.memory as memory
+
+    assert memory.external_backends() == []
+    assert [row["name"] for row in memory.providers()] == ["builtin"]
+
+
+def test_a_gateway_that_cannot_list_providers_still_reads_its_own_files(hermes, monkeypatch):
+    """The import is Hermes' private helper; losing it must not lose the answer."""
+    broken = types.ModuleType("hermes_cli.web_server_memory")
+    monkeypatch.setitem(sys.modules, "hermes_cli.web_server_memory", broken)
+    import hermie_plugin.memory as memory
+
+    assert memory.external_backends() == []
+
+
 # -- the advert follows the switches -----------------------------------------
 
 
@@ -370,19 +522,29 @@ def module_with(settings=None):
     return memory.MemoryModule(FakeRuntime(settings))
 
 
-def test_both_capabilities_are_there_by_default():
+def test_every_capability_is_there_by_default():
     from hermie_plugin import contract
 
-    assert module_with().capabilities() == [contract.CAP_MEMORY_BROWSE, contract.CAP_MEMORY_EDIT]
+    assert module_with().capabilities() == [
+        contract.CAP_MEMORY_BROWSE,
+        contract.CAP_MEMORY_RAW,
+        contract.CAP_MEMORY_EDIT,
+    ]
 
 
-def test_switching_editing_off_leaves_browsing():
+def test_switching_editing_off_leaves_both_kinds_of_reading():
     from hermie_plugin import contract
 
-    assert module_with({"memory.edit": False}).capabilities() == [contract.CAP_MEMORY_BROWSE]
+    assert module_with({"memory.edit": False}).capabilities() == [
+        contract.CAP_MEMORY_BROWSE,
+        contract.CAP_MEMORY_RAW,
+    ]
 
 
-def test_switching_browsing_off_takes_editing_with_it():
-    """An app that cannot list an entry cannot name one to replace or remove."""
+def test_switching_browsing_off_takes_the_rest_with_it():
+    """An app that cannot list an entry cannot name one to replace or remove.
+
+    Raw reading goes with it for a plainer reason: it is the same two files.
+    """
     assert module_with({"memory.browse": False}).capabilities() == []
     assert module_with({"memory.browse": False, "memory.edit": True}).capabilities() == []

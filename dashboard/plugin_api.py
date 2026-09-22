@@ -20,6 +20,13 @@ the store is opened under that profile's home. See `memory/__init__.py`.
 
 Every handler does its filesystem work on a worker thread: the store takes a
 file lock, and a lock taken on the event loop would stall every other request.
+
+`raw` is the one handler that reads a file itself rather than asking the store,
+and it takes no lock. That is safe in the only direction it could go wrong: the
+store writes a memory file by writing a temporary one and renaming it over the
+old, so a reader sees the whole of one version or the whole of the other, never a
+half-written file. Taking the store's lock to read would mean a browser tab could
+hold up a bot's own write.
 """
 
 import importlib.util
@@ -156,6 +163,41 @@ async def memory_graph(profile: Optional[str] = None, offset: int = 0, limit: in
         )
 
     return await run_in_threadpool(_guard, run, "graph")
+
+
+@router.get("/memory/raw")
+async def memory_raw(profile: Optional[str] = None, backend: Optional[str] = None):
+    """Every backend of this profile, with what it holds or why it cannot say.
+
+    Gated by `memory.browse` and nothing else: this is reading, of the same files
+    `list` reads, and a second switch for the same permission would be a switch
+    somebody has to discover before the tab works.
+
+    `backend` narrows the answer to one and is optional. A name this gateway does
+    not have is a 400 rather than an empty list, because an app that mistyped a
+    backend and got `[]` would report that the gateway has nothing.
+    """
+    home, settings = _resolve(profile)
+    memory_mod, browse_mod = _memory()
+
+    def run():
+        with memory_mod.scoped(home):
+            documents, unreadable = memory_mod.raw_files()
+            backends = [
+                browse_mod.builtin_backend(
+                    documents, editable=settings["edit"], unreadable=unreadable
+                )
+            ] + memory_mod.external_backends()
+        wanted = str(backend or "")
+        if wanted:
+            backends = [row for row in backends if row["name"] == wanted]
+            if not backends:
+                raise HTTPException(
+                    status_code=400, detail=f"no memory backend named '{wanted}' on this gateway"
+                )
+        return browse_mod.raw(str(profile), backends)
+
+    return await run_in_threadpool(_guard, run, "raw")
 
 
 @router.post("/memory/edit")

@@ -6,9 +6,9 @@
 python -m pytest --rootdir=tests tests
 ```
 
-Seventeen of them — the memory routes in `tests/test_memory_routes.py` — need
-FastAPI, and two more need Hermes itself. They **skip** rather than fail when
-those are absent, so a clean run on a bare checkout is not a full run. `python
+The memory-route tests in `tests/test_memory_routes.py` need FastAPI, and a few
+elsewhere need Hermes itself. They **skip** rather than fail when those are
+absent, so a clean run on a bare checkout is not a full run. `python
 -m pytest --rootdir=tests tests -q` prints the skip count; if it is not `0`,
 that is what it is telling you:
 
@@ -34,11 +34,12 @@ hermes plugins validate /path/to/hermie-plugin   # the catalog admission gate
 hermes plugins doctor   /path/to/hermie-plugin   # imports it and calls register()
 ```
 
-The two skipped-without-Hermes tests are worth running there by hand at least
+The tests that skip without Hermes are worth running there by hand at least
 once per change to the memory routes: one checks that `/api/plugins` is absent
 from core's own public-path allowlist (which is what puts these routes behind
-the auth gate at all), and one checks that the entry delimiter this plugin
-believes in still matches `MemoryStore`'s.
+the auth gate at all), one checks that the entry delimiter this plugin believes
+in still matches `MemoryStore`'s, and one that the two file names the raw route
+reads are the two the store writes.
 
 `doctor` catches the things unit tests cannot: a hook name that does not exist,
 a callback without `**kwargs`, and drift between `provides_hooks` in the manifest

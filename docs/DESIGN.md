@@ -1149,6 +1149,27 @@ inside that profile and the lock it takes is that profile's `MEMORY.md.lock`.
   entries; mem0's own surface is `search(query, top_k)` with no `get_all`. So
   every external row carries `enumerable: false`. That is the gap, and naming
   the provider while saying it cannot be opened is the honest version of it.
+- **A backend can also be read as it is stored.** Everything above answers a
+  memory the store has already parsed, which is the shape to edit it in and the
+  wrong shape for "what is in there": a heading, a blank line the store kept, a
+  delimiter that ended up inside an entry and the file's real order are all
+  invisible in a list of entries. So `raw` reads the two files itself — decoded
+  and otherwise untouched — from the directory Hermes resolves per call, and
+  reports every backend beside them. It writes nothing, and it is behind
+  `memory.browse` because it is the same reading of the same files.
+
+  Three answers there are deliberately distinct, because collapsing any two of
+  them tells somebody their memory is empty when it is not: a file that is
+  absent is left out of the answer while one that exists and is bare is sent as
+  empty; a backend that is set up and cannot enumerate is available with no
+  documents and its own sentence saying why; and a backend this gateway does not
+  really have — not installed, or named in the config with nothing to
+  authenticate with — is not available at all. `available` is therefore narrower
+  here than on a `list` row, where it keeps the discovery's own meaning: that
+  route reports what exists, this one is asked what is stored. Each document is
+  capped at 256 KiB with `truncated` beside the full `chars`, which is a ceiling
+  on a file that has gone wrong rather than a page — there is no way to ask for
+  the rest and no intention of adding one.
 - **Both halves switch off per profile**, through that profile's own config —
   which is the right scope, since the operator of a profile decides whether its
   memory can be opened. `memory.edit` without `memory.browse` is not a state:

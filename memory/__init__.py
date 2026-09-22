@@ -31,6 +31,14 @@ external provider (mem0 and friends) is **listed and never enumerated**: the
 provider interface offers `prefetch(query)` returning opaque formatted text and
 no listing call at all, so its entries cannot be shown read-only without
 inventing an API Hermes does not have.
+
+**Raw reading goes to the files, not to the store.** Everything above hands back
+a memory the store has already parsed into entries, which is the shape to edit
+and the wrong shape for "what is actually in there" — a heading, a blank line the
+store kept and a delimiter that ended up inside an entry all vanish in the
+parse. So `raw_files` reads the two files itself, as bytes-to-text and nothing
+more, from the directory Hermes resolves per call so the home override still
+moves it. It writes nothing and it parses nothing.
 """
 
 from __future__ import annotations
@@ -41,6 +49,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 from .. import contract
+from . import browse
 from .browse import TARGETS
 
 logger = logging.getLogger(__name__)
@@ -51,6 +60,12 @@ NAME = "memory"
 # only as the fallback for a runtime where the store cannot be imported, and a
 # test keeps the two equal when it can.
 ENTRY_DELIMITER = "\n§\n"
+
+# The file each target is stored in. One source with the labels a raw document
+# carries, because they are the same two strings for the same reason: the label
+# of a file shown as stored is the file's own name. A test keeps these equal to
+# the store's own names wherever Hermes can be imported.
+RAW_FILENAMES = dict(browse.RAW_LABELS)
 
 
 class MemoryUnavailable(RuntimeError):
@@ -169,6 +184,80 @@ def usage_of(store: Any, by_target: Dict[str, List[str]]) -> Dict[str, Tuple[int
     }
 
 
+# -- the files, as they are stored ------------------------------------------
+
+
+def memory_dir() -> Path:
+    """The directory this home keeps its memory files in. Call inside `scoped`.
+
+    Asked of Hermes rather than joined here. `get_memory_dir` is resolved per
+    call precisely so the home override moves it, and a second opinion about
+    where a memory file lives is how a route ends up reading a file nothing
+    writes.
+    """
+    try:
+        from tools.memory_tool import get_memory_dir  # type: ignore
+    except Exception as exc:
+        raise MemoryUnavailable(f"the hermes memory store is not importable here: {exc}")
+    return Path(str(get_memory_dir()))
+
+
+def raw_files() -> Tuple[Dict[str, str], List[str]]:
+    """`({target: the file as stored}, [targets whose file could not be read])`.
+
+    Call inside `scoped`. Nothing is written and nothing is parsed: the
+    delimiters, a heading somebody put at the top and a blank line the store
+    kept are the whole reason to read a file this way.
+
+    A target with no file at all is in neither half, so the answer can tell "the
+    file is there and empty" from "there is no file yet" — which a parsed listing
+    cannot, and which is the difference between a memory that was cleared and one
+    that was never written.
+
+    `utf-8-sig` because the store reads them that way: a BOM a Windows editor
+    left behind belongs to neither the file's content nor this answer. Decoding
+    stays strict, so a file that is not text is reported as unreadable instead of
+    being handed over with the undecodable bytes quietly replaced.
+    """
+    directory = memory_dir()
+    found: Dict[str, str] = {}
+    unreadable: List[str] = []
+    for target in TARGETS:
+        path = directory / RAW_FILENAMES[target]
+        if not path.exists():
+            continue
+        try:
+            found[target] = path.read_text(encoding="utf-8-sig")
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.info("hermie: could not read %s (%s)", path, exc)
+            unreadable.append(target)
+    return found, unreadable
+
+
+# -- the providers -----------------------------------------------------------
+
+
+def _discovered() -> List[Dict[str, Any]]:
+    """Hermes' own memory-provider rows, or nothing where it cannot say.
+
+    One place asks, so `list` and `raw` cannot end up disagreeing about which
+    providers this gateway has. A gateway that cannot answer at all is not an
+    error: the built-in memory is still readable and saying so is still useful.
+    """
+    try:
+        from hermes_cli.web_server_memory import _discover_memory_provider_statuses  # type: ignore
+
+        rows = _discover_memory_provider_statuses() or []
+    except Exception as exc:
+        logger.info("hermie: could not list memory providers (%s)", exc)
+        return []
+    return [
+        row
+        for row in rows
+        if isinstance(row, dict) and str(row.get("name") or "") not in ("", browse.BUILTIN)
+    ]
+
+
 def providers() -> List[Dict[str, Any]]:
     """Which memory providers exist, and the fact that none can be listed.
 
@@ -180,26 +269,45 @@ def providers() -> List[Dict[str, Any]]:
     the honest answer is to name the provider and say it cannot be opened.
     """
     rows: List[Dict[str, Any]] = [
-        {"name": "builtin", "description": "MEMORY.md and USER.md", "available": True, "enumerable": True}
+        {"name": browse.BUILTIN, "description": browse.BUILTIN_LABEL, "available": True, "enumerable": True}
     ]
-    try:
-        from hermes_cli.web_server_memory import _discover_memory_provider_statuses  # type: ignore
-
-        for row in _discover_memory_provider_statuses() or []:
-            if not isinstance(row, dict) or str(row.get("name") or "") == "builtin":
-                continue
-            rows.append(
-                {
-                    "name": str(row.get("name") or ""),
-                    "description": str(row.get("description") or ""),
-                    "available": bool(row.get("available")),
-                    # See the docstring. Not "not implemented" — not offered.
-                    "enumerable": False,
-                }
-            )
-    except Exception as exc:
-        logger.info("hermie: could not list memory providers (%s)", exc)
+    for row in _discovered():
+        rows.append(
+            {
+                "name": str(row.get("name") or ""),
+                "description": str(row.get("description") or ""),
+                "available": bool(row.get("available")),
+                # See the docstring. Not "not implemented" — not offered.
+                "enumerable": False,
+            }
+        )
     return rows
+
+
+def external_backends() -> List[Dict[str, Any]]:
+    """Every backend besides the files, in the terms the `raw` answer uses.
+
+    Call inside `scoped`: which provider a profile names is that profile's own
+    config, so this is a different answer per profile.
+
+    `available` is narrower here than on a `list` row, deliberately. There it is
+    the discovery's own meaning — the provider's package imports — because that
+    route reports what exists. Here it has to mean "this gateway could really
+    use it", since the question being asked is what is stored in it: a provider
+    named in the config with no credentials is installed and holds nothing this
+    gateway could ever reach, and reporting it as available would point somebody
+    at an empty card as though it were the answer. A gateway too old to say
+    whether a provider is configured is taken at its word rather than accused.
+    """
+    return [
+        browse.external_backend(
+            str(row.get("name") or ""),
+            label=str(row.get("description") or ""),
+            installed=bool(row.get("available")),
+            configured=row.get("configured") is not False,
+        )
+        for row in _discovered()
+    ]
 
 
 # -- the module -------------------------------------------------------------
@@ -228,6 +336,10 @@ class MemoryModule:
         found: List[str] = []
         if self.browse_enabled:
             found.append(contract.CAP_MEMORY_BROWSE)
+            # Reading a backend as stored is reading: the same files, behind the
+            # same switch, and a string of its own only so an app can tell a
+            # plugin that serves the route from one old enough to answer 404.
+            found.append(contract.CAP_MEMORY_RAW)
             # Editing without browsing is a switch nobody wants: an app that
             # cannot list entries cannot name one to replace or remove.
             if self.edit_enabled:

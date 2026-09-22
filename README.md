@@ -106,6 +106,7 @@ that cannot work is worse than one that is absent.
 | `command.me` | `/me` was accepted by this gateway |
 | `plugin.update_check` | the advert carries the newest release tag |
 | `memory.browse` | a profile's memory can be read over the dashboard's plugin routes |
+| `memory.raw` | and read as it is stored, one document per backend |
 | `memory.edit` | and written |
 
 A device's own switches are read over **every** type in the payload table above,
@@ -353,9 +354,10 @@ everything else.
 | `GET /api/plugins/hermie/memory/list?profile=` | entries per target, each with an id, its length and its topics, plus the char usage and limit |
 | `GET /api/plugins/hermie/memory/search?profile=&q=` | every entry matching all of the query's words, across both targets |
 | `GET /api/plugins/hermie/memory/graph?profile=&offset=&limit=` | nodes and edges to draw: entries, the profile, topics; `offset`/`limit` page over entries |
+| `GET /api/plugins/hermie/memory/raw?profile=&backend=` | every backend of that profile with its documents as stored; `backend` narrows to one |
 | `POST /api/plugins/hermie/memory/edit` | `{profile, target, op: add\|replace\|remove, content, old_text \| index}` |
 
-Four things worth knowing before you call them.
+Five things worth knowing before you call them.
 
 - **They are on the dashboard's port, behind the dashboard's auth.** Not on the
   gateway's WebSocket, where the rest of this plugin lives. A caller needs the
@@ -375,6 +377,25 @@ Four things worth knowing before you call them.
   the provider interface offers a query-shaped `prefetch` and has no call that
   returns entries, so there is nothing to show without inventing an API Hermes
   does not have.
+- **`raw` answers what is stored, which the other three cannot.** They hand back
+  a memory already parsed into entries — the shape to edit it in, and the one
+  that hides a heading, a blank line the store kept, a delimiter that ended up
+  inside an entry and the order the file really has. So `raw` reads the files
+  themselves and returns them as they are, delimiters included, one document per
+  file, alongside every other backend this gateway has. It never writes.
+
+  Its empty answers are three different answers, and they are worth reading
+  apart: a file that is **not there** is left out of the response, while one that
+  exists and is bare is sent with `content: ""`; a backend that is set up and
+  cannot enumerate — every external provider, today — is `available: true` with
+  no documents and a `note` saying why; and one this gateway does not really have
+  (not installed, or named in the config with nothing to authenticate with) is
+  `available: false`. Each document is capped at 256 KiB with `truncated: true`
+  and `chars` still reporting the whole length; there is no way to ask for the
+  rest, because that cap is for a file that has gone wrong rather than for
+  paging. Reading it needs `memory.browse` and nothing more, since it is the same
+  reading of the same files, and `editable` on a backend follows `memory.edit`
+  for the day a write exists — nothing writes a whole document now.
 
 Switch either half off per profile:
 

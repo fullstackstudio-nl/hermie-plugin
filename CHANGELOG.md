@@ -8,6 +8,41 @@ people.
 
 ### Added
 
+- `memory.raw` — **a backend can be read as it is stored.** The three browsing
+  routes all answer a memory the store has already parsed into entries, which is
+  the shape to edit it in and the wrong shape for the question "what is in
+  there": a heading, a blank line the store kept, a delimiter that ended up
+  inside an entry and the order the file really has are none of them visible in a
+  list of rows. And for an external provider there was nothing at all — `list`
+  names it and marks it `enumerable: false`, which says it exists and says
+  nothing about what it holds. `GET /memory/raw?profile=[&backend=]` answers one
+  card's worth per backend: the built-in one with each file as it is held,
+  delimiters included, and every other one with either its documents or the
+  reason it has none.
+
+  The empty answers are the part that had to be got right, because collapsing
+  any two of them tells somebody their memory is empty when it is not. A file
+  that is **absent** is left out of the answer, while one that exists and is
+  bare is sent with `content: ""`. A backend that is set up and cannot be listed
+  is available with no documents and its own sentence about why — which is every
+  external provider, since the interface offers `prefetch(query)` and nothing
+  that returns what it holds. A backend this gateway does not really have, either
+  not installed or named in the config with nothing to authenticate with, is not
+  available; `available` is therefore narrower on this route than on a `list`
+  row, where it still means "the package imports", because that route reports
+  what exists and this one is asked what is stored. A file that exists and cannot
+  be decoded is named in the backend's note rather than shown as empty, since
+  empty is a claim about its contents.
+
+  It reads the files itself, from the directory Hermes resolves per call so the
+  profile scope still moves it, and it writes nothing. Each document is capped at
+  256 KiB with `truncated: true` beside the full `chars` — a ceiling on a file
+  that has gone wrong, not a page, since there is no way to ask for the rest.
+  Gated by `memory.browse` alone: it is the same reading of the same files, and a
+  second switch for one permission is a switch somebody has to find before the
+  feature works. `editable` follows `memory.edit` for the day a write exists;
+  nothing writes a whole document today.
+
 - `context.orientation` — the rendered section now says what it is. A bot was
   told the facts about the person and nothing about where they came from, so
   somebody had to sit and explain the plugin to their bot before the feature

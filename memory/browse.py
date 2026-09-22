@@ -11,6 +11,12 @@ right now". That is deliberately not a handle: entries move when one above them
 is removed. Every write goes back through ``MemoryStore`` keyed on the entry's
 **text**, which is what the store itself matches on, so an index that went stale
 between a read and a write cannot delete the wrong line.
+
+The `raw` half of this module does the opposite of all that: it hands a document
+back exactly as it is stored, delimiters and headings and blank lines included,
+because the parse above is what hides them. A listing answers "which entries are
+there"; that one answers "what is in the file", and the two are different
+questions a person asks for different reasons.
 """
 
 from __future__ import annotations
@@ -33,6 +39,23 @@ EXCERPT_CHARS = 120
 MAX_NODES = 400
 MAX_EDGES = 1200
 DEFAULT_PAGE = 100
+
+# What one `raw` document may carry. A memory file is a few kilobytes and the
+# store's own limits are smaller still, so this is not a page size — there is no
+# way for a reader to ask for the rest, and no intention of adding one. It is a
+# ceiling on a file that has gone wrong, and `truncated` beside the real `chars`
+# is what an answer says when it bit.
+RAW_DOCUMENT_CHARS = 256 * 1024
+
+# The built-in backend: the two files themselves, rather than a provider.
+BUILTIN = "builtin"
+BUILTIN_LABEL = "MEMORY.md and USER.md"
+
+# What each target's document is called. It is the file's own name on disk,
+# because a view whose whole point is showing a file as stored should call that
+# file what the filesystem calls it. `memory/__init__.py` reads the files by
+# these same names, and a test keeps them equal to the store's.
+RAW_LABELS = {"memory": "MEMORY.md", "user": "USER.md"}
 
 # Cheap topics. None of this is NLP and it does not pretend to be: a capitalised
 # word that is not sentence-initial, an @handle, a #hashtag, a date. It is there
@@ -117,6 +140,98 @@ def listing(
             }
         )
     return {"targets": targets}
+
+
+def raw_document(target: str, content: str, *, limit: int = RAW_DOCUMENT_CHARS) -> Dict[str, Any]:
+    """One document as stored, cut only if it is absurd, and saying when it was.
+
+    `chars` is the length of the WHOLE document rather than of what is carried.
+    A reader that measured the string it received would report a runaway file as
+    small on the one occasion the number mattered, and `truncated` would be the
+    only hint left that it had ever been bigger.
+    """
+    text = "" if content is None else str(content)
+    return {
+        "id": target,
+        "label": RAW_LABELS.get(target, target),
+        "content": text[:limit],
+        "chars": len(text),
+        "truncated": len(text) > limit,
+    }
+
+
+def builtin_backend(
+    documents: Dict[str, str],
+    *,
+    editable: bool,
+    unreadable: Iterable[str] = (),
+    limit: int = RAW_DOCUMENT_CHARS,
+) -> Dict[str, Any]:
+    """The two files, in the order a person reads them, exactly as they are held.
+
+    A target that is not in *documents* has no file on disk, and it is absent
+    from the answer rather than present and empty. That distinction is the
+    reason somebody opens this: an empty document says the file is there and
+    bare, and a missing one says the store has never written it, and being told
+    the first when the second is true sends a person looking in the wrong place.
+
+    A file that exists and cannot be read is in *unreadable* and is named in the
+    note instead of shown as empty, because empty is a claim about its contents.
+    """
+    refused = set(unreadable)
+    unread = [RAW_LABELS.get(target, target) for target in TARGETS if target in refused]
+    return {
+        "name": BUILTIN,
+        "label": BUILTIN_LABEL,
+        "available": True,
+        "editable": bool(editable),
+        "note": f"This gateway could not read {' or '.join(unread)}." if unread else None,
+        "documents": [
+            raw_document(target, documents[target], limit=limit)
+            for target in TARGETS
+            if target in documents
+        ],
+    }
+
+
+def external_backend(
+    name: str, *, label: str = "", installed: bool = True, configured: bool = True
+) -> Dict[str, Any]:
+    """A provider-backed memory, which can be named and cannot be enumerated.
+
+    `documents` is empty on every one of these and the note says which kind of
+    empty it is. A provider offers `prefetch(query)` — formatted text for one
+    turn — and mem0's own surface is a query with a top-k and no call that
+    returns everything, so there is nothing to ask that would answer "what is in
+    there". Saying that is the honest answer and inventing an API is not.
+
+    Not installed, installed but not configured, and set up but unlistable are
+    three different things to be told: the first two are something to go and do,
+    the third is somewhere else to go and look. `available` is false for the two
+    that are not really here, which is what an app reads to tell them apart.
+    """
+    if not installed:
+        note = f"{name} is not installed on this gateway."
+    elif not configured:
+        note = f"{name} is installed on this gateway and is not configured for this profile."
+    else:
+        note = f"{name} answers a query and offers no call that lists what it holds."
+    return {
+        "name": name,
+        "label": label or name,
+        "available": bool(installed) and bool(configured),
+        # No route writes a whole document, for any backend. The field is on the
+        # wire for the day one does; until then a reader that trusted it would
+        # be drawing a control that cannot save.
+        "editable": False,
+        "note": note,
+        "documents": [],
+    }
+
+
+def raw(profile: str, backends: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """The `raw` answer: which profile was read, and every backend it has."""
+    return {"profile": str(profile), "backends": list(backends)}
 
 
 def matches(text: str, query: str) -> bool:

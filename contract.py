@@ -72,7 +72,7 @@ import time
 from typing import Any, Dict, Iterable, List
 
 # The plugin's own release version. Also in plugin.yaml; a test keeps them equal.
-PLUGIN_VERSION = "0.6.0"
+PLUGIN_VERSION = "0.7.0"
 
 # Where an update comes from, named here so the advert and the update check
 # cannot disagree about which repository this plugin is.
@@ -161,6 +161,14 @@ CAP_COMMAND_ME = "command.me"
 # to know the dashboard address and hold a dashboard credential.
 CAP_MEMORY_BROWSE = "memory.browse"
 CAP_MEMORY_EDIT = "memory.edit"
+# A backend can be read as it is STORED, which the browsing routes cannot do:
+# they answer a memory already parsed into entries, and a heading, a blank line
+# or a delimiter that ended up inside an entry are invisible in that shape —
+# as is anything an external provider holds, which has no entries to parse.
+# Behind `memory.browse` like the rest of reading, and a string of its own
+# because a plugin without the route answers 404 and an app should be able to
+# know that before it draws a tab for it.
+CAP_MEMORY_RAW = "memory.raw"
 # The gateway was asked to find out whether a newer plugin exists, and the
 # advert carries the answer. Advertised only when the operator switched the
 # check on: the string says an answer is there, not that one could be.
