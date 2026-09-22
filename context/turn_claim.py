@@ -1,0 +1,209 @@
+"""Who is sending the next turn of a shared chat, said by the person sending it.
+
+Hermes names the sender of a turn to a hook as the agent's `_user_id`, and on a
+dashboard session that is the login stamped on the session record when the
+session was CREATED. A second window attaching to the same session changes the
+transport slot into a fan-out that names nobody, and the turn thread rebinds that
+slot, so nothing reachable during the turn names the person who pressed send.
+Every rung this plugin had — the hook, the live record, the session variables —
+therefore names whoever opened the chat, on every turn, whoever typed it.
+
+The one moment the gateway does know who is sending is an authenticated HTTP
+request: the dashboard's auth middleware verifies the caller and attaches the
+session it verified to `request.state.session`, carrying the provider and the
+user id the WebSocket ticket was minted from. So the app says, just before it
+submits a prompt, "the next turn of this session is mine", over the dashboard,
+as itself. That is a *claim*, and this module is where claims live until a turn
+spends one.
+
+The rules, each of which a test holds:
+
+- **The identity is the login's, never the body's.** The route builds it from
+  the verified session in the same `<provider>:<user id>` spelling the server
+  uses for `auth_user_id`, so a claim and a hook sender compare like with like.
+  A request that names no person — a gateway without a login, a service token —
+  claims nothing.
+- **A claim is for one turn.** `take` removes it. The next turn without a claim
+  falls back to what Hermes says, which is the opener.
+- **A claim is short-lived.** `TTL_SECONDS` after it was made it is ignored and
+  dropped, so a claim whose prompt never ran cannot attach itself to somebody
+  else's turn an hour later.
+- **Last claim wins.** Two people claiming one session inside the window leave
+  the later claim standing. The gateway runs one turn at a time per session and
+  the app claims immediately before it submits, so this is the order the turns
+  will run in far more often than not; DESIGN.md says where it is not.
+- **Bounded, in memory, in-process.** At most `MAX_CLAIMS` sessions are held,
+  oldest dropped first; nothing is written to disk and nothing leaves the
+  process.
+
+**Which id.** The app knows the runtime session id — the `session_id` that
+`session.create` and `session.resume` answer and that `prompt.submit` takes —
+and that is the id it claims. During the turn Hermes binds the same id into the
+session variables as `HERMES_UI_SESSION_ID`, which is the exact match. The hook
+itself is handed the agent's durable session id instead, and a session also has
+a durable key; the route records both beside the runtime id when the live table
+can say what they are, and they are matched only when a turn has no runtime id
+bound at all. The fallback never overrides an exact answer: two windows can hold
+two runtime sessions on one stored session, and a turn that knows its own
+runtime id must not spend a claim made for the other.
+
+**One store per process.** Hermes imports this plugin under a name of its own
+for its hooks, and the dashboard imports `dashboard/plugin_api.py` separately,
+which loads a second copy of the package. Module state would be two stores that
+never meet, so the store is kept in `sys.modules` under a fixed name that both
+copies find.
+"""
+
+from __future__ import annotations
+
+import re
+import sys
+import threading
+import time
+import types
+from collections import OrderedDict
+from dataclasses import dataclass
+from typing import Any, Callable, FrozenSet, Iterable, Optional
+
+# How long a claim stands. Long enough to cover a submit that waits for the
+# agent to be built or for a slow network between the two requests, short
+# enough that a claim whose prompt never ran is gone before anybody's next turn
+# of an ordinary conversation.
+TTL_SECONDS = 90.0
+
+# How many sessions can hold a claim at once. A claim is spent within seconds in
+# the ordinary case, so this is a ceiling for a misbehaving client, not a size
+# the gateway is expected to reach.
+MAX_CLAIMS = 256
+
+# A runtime id is eight hex characters today and a durable id is a timestamped
+# token; both fit this. Anything carrying a separator, whitespace or a control
+# character is refused rather than cleaned, because an id is something the
+# gateway minted, not text to be repaired.
+SESSION_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+
+# The process-wide slot both copies of the plugin find. Versioned, so a plugin
+# update that changes the store's shape gets a fresh one instead of methods
+# from the old class.
+REGISTRY = "hermie_turn_claims_v1"
+
+
+@dataclass(frozen=True)
+class Claim:
+    identity: str
+    at: float
+    aliases: FrozenSet[str]
+
+
+class TurnClaims:
+    """Claims by runtime session id, each for one turn and for a short while."""
+
+    def __init__(
+        self,
+        *,
+        ttl: float = TTL_SECONDS,
+        cap: int = MAX_CLAIMS,
+        clock: Callable[[], float] = time.monotonic,
+    ):
+        self.ttl = ttl
+        self.cap = cap
+        self.clock = clock
+        self.lock = threading.Lock()
+        # Insertion order is claim order: a re-claim is moved to the back, so
+        # the front is always the oldest, which is what both expiry and the cap
+        # drop first.
+        self.claims: "OrderedDict[str, Claim]" = OrderedDict()
+
+    def __len__(self) -> int:
+        with self.lock:
+            self._expire()
+            return len(self.claims)
+
+    def claim(self, session_id: str, identity: str, aliases: Iterable[str] = ()) -> None:
+        """Say that the next turn of *session_id* is *identity*'s."""
+        if not session_id or not identity:
+            return
+        with self.lock:
+            self._expire()
+            self.claims.pop(session_id, None)
+            self.claims[session_id] = Claim(
+                identity=identity,
+                at=self.clock(),
+                aliases=frozenset(alias for alias in aliases if alias and alias != session_id),
+            )
+            while len(self.claims) > self.cap:
+                self.claims.popitem(last=False)
+
+    def take(self, session_id: str, aliases: Iterable[str] = ()) -> str:
+        """The claimed identity for this turn, spent; or "" when there is none."""
+        return self._find(session_id, aliases, spend=True)
+
+    def peek(self, session_id: str, aliases: Iterable[str] = ()) -> str:
+        """The claimed identity for this turn, left in place."""
+        return self._find(session_id, aliases, spend=False)
+
+    def _find(self, session_id: str, aliases: Iterable[str], *, spend: bool) -> str:
+        with self.lock:
+            self._expire()
+            key = self._key(session_id, [alias for alias in aliases if alias])
+            if key is None:
+                return ""
+            found = self.claims.pop(key) if spend else self.claims[key]
+            return found.identity
+
+    def _key(self, session_id: str, aliases: list) -> Optional[str]:
+        if session_id:
+            # The exact answer. A turn that knows its runtime id is matched by
+            # it and by nothing else.
+            return session_id if session_id in self.claims else None
+        for alias in aliases:
+            if alias in self.claims:
+                return alias
+        # Newest first: the latest claim on a stored session is the one the
+        # last-claim-wins rule keeps.
+        for key in reversed(self.claims):
+            if self.claims[key].aliases.intersection(aliases):
+                return key
+        return None
+
+    def _expire(self) -> None:
+        cutoff = self.clock() - self.ttl
+        while self.claims:
+            oldest = next(iter(self.claims))
+            if self.claims[oldest].at > cutoff:
+                break
+            del self.claims[oldest]
+
+
+def shared() -> TurnClaims:
+    """The one store in this process, created by whichever copy asks first."""
+    holder = sys.modules.get(REGISTRY)
+    if holder is None:
+        fresh = types.ModuleType(REGISTRY)
+        fresh.claims = TurnClaims()
+        # `setdefault` on a dict is atomic, so two copies racing here agree on
+        # whichever store landed first.
+        holder = sys.modules.setdefault(REGISTRY, fresh)
+    return holder.claims
+
+
+def valid_session_id(value: Any) -> Optional[str]:
+    """*value* when it is a well-formed session id, otherwise None."""
+    if not isinstance(value, str) or not SESSION_ID_PATTERN.match(value):
+        return None
+    return value
+
+
+def identity_of(session: Any) -> str:
+    """`<provider>:<user id>` for a verified dashboard session, or "".
+
+    The same spelling the server gives `auth_user_id`, stripped the same way, so
+    the claim and every other rung compare as the same kind of string.
+    """
+    if session is None:
+        return ""
+    provider = str(getattr(session, "provider", "") or "").strip()
+    user_id = str(getattr(session, "user_id", "") or "").strip()
+    if not provider or not user_id:
+        return ""
+    return f"{provider}:{user_id}"

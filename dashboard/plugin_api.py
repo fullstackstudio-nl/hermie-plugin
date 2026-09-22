@@ -1,4 +1,7 @@
-"""Hermie's memory routes, mounted by the dashboard at /api/plugins/hermie/.
+"""Hermie's dashboard routes, mounted by the dashboard at /api/plugins/hermie/.
+
+Two kinds: the memory browser, and `context/turn`, where the app claims the next
+turn of a shared chat for the person signed in (see `context/turn_claim.py`).
 
 Hermes discovers this file through `dashboard/manifest.json` and imports it with
 `spec_from_file_location` under a name of its own — so it is NOT loaded as part
@@ -9,9 +12,15 @@ logic in the package where it is testable instead of duplicated here.
 **Auth.** None of these handlers check a caller, and that is not an oversight.
 Hermes gates `/api/plugins/...` with process-wide middleware that answers 401
 before a handler runs; there is no per-route dependency to add, and no route on
-this gateway — core's included — ever sees a user, a role or an owner. So the
-trust model is the dashboard's: whoever is signed in is an operator of this
-machine. README says so in the shared-gateway warning.
+this gateway — core's included — is given a role, an owner or a permission to
+check. So the trust model is the dashboard's: whoever is signed in is an
+operator of this machine. README says so in the shared-gateway warning.
+
+What a gated gateway does hand a handler is WHO was admitted: the middleware
+attaches the session it verified to `request.state.session`. The memory routes
+do not use it, because there is nothing per-person to decide. `context/turn`
+does, and only as a fact about the caller — it is the identity the claim is
+made for, never a permission it checks.
 
 **Profile.** Required on every route, because a plugin handler is handed none
 and would otherwise act on whichever profile the dashboard process happens to
@@ -34,7 +43,7 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
@@ -314,6 +323,44 @@ def _guard_profile_name(run, label: str):
         raise HTTPException(status_code=503, detail=str(exc))
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"{label} failed: {exc}")
+
+def _turn_claim():
+    _package()
+    from hermie_plugin.context import live_session, turn_claim
+
+    return turn_claim, live_session
+
+
+@router.post("/context/turn", status_code=204)
+async def context_turn(request: Request):
+    """Claim the next turn of a session for the person making this request.
+
+    The body is `{"session_id": "<runtime session id>"}` and nothing else is
+    read from it. The identity is the verified dashboard login, spelled the way
+    the gateway spells `auth_user_id`. No disk, no outbound call and no lock
+    anybody else waits on, so it runs on the event loop.
+    """
+    turn_claim, live_session = _turn_claim()
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="the body must be JSON")
+    session_id = turn_claim.valid_session_id(body.get("session_id") if isinstance(body, dict) else None)
+    if session_id is None:
+        raise HTTPException(
+            status_code=400, detail="session_id must be the runtime session id the app submits to"
+        )
+    identity = turn_claim.identity_of(getattr(request.state, "session", None))
+    if not identity:
+        # Past the gate but not as a person: a gateway without a login, where
+        # the legacy token admits every caller as nobody, or a service token.
+        # There is nobody to claim the turn for.
+        raise HTTPException(
+            status_code=403, detail="this request is not signed in as a person, so there is no one to claim the turn for"
+        )
+    aliases = live_session.LiveSessions().durable_ids(session_id)
+    turn_claim.shared().claim(session_id, identity, aliases)
+    return Response(status_code=204)
 
 
 def _guard(run, label: str):

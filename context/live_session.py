@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import logging
 import sys
-from typing import Any, Mapping, Optional
+from typing import Any, Mapping, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -106,3 +106,29 @@ class LiveSessions:
             # the sender, not the turn.
             logger.warning("hermie: could not read the live session: %s", exc)
         return ""
+
+    def durable_ids(self, session_id: str) -> Tuple[str, ...]:
+        """The durable key and agent session id of the runtime session *session_id*.
+
+        Used when a turn is claimed, so that a turn whose runtime id is not bound
+        can still find the claim by the ids the hook and the session variables
+        carry. A plain lookup in the table and nothing more: this runs on the
+        dashboard's event loop, where taking the server's session lock would
+        make one request wait on every turn in the gateway.
+        """
+        server = self.server()
+        if server is None or not session_id:
+            return ()
+        try:
+            sessions = getattr(server, "_sessions", None)
+            found = sessions.get(session_id) if isinstance(sessions, dict) else None
+            if not isinstance(found, dict):
+                return ()
+            ids = (
+                str(found.get("session_key") or ""),
+                str(getattr(found.get("agent"), "session_id", "") or ""),
+            )
+            return tuple(item for item in ids if item)
+        except Exception as exc:
+            logger.warning("hermie: could not read the live session's ids: %s", exc)
+            return ()

@@ -788,7 +788,9 @@ introduced session the prompt says nothing at all.
 
 ### Resolution order
 
-The sender the hook was handed → the login on the gateway's live session record
+A fresh claim on this turn (see "A shared chat names its opener on every turn"
+below) → the sender the hook was
+handed → the login on the gateway's live session record
 → the sender bound into the session variables → the operator's
 `context.default_user` → the app's own `default` → the only registered person,
 if there is exactly one **and the gateway named nobody**. With several
@@ -796,8 +798,9 @@ registered people and no way to tell who is asking, or with a sender the app has
 no row for and no default naming anyone, **nothing is injected**: showing a bot
 the wrong person's notes is worse than showing it none.
 
-The first three are one question asked in three places, ordered by how recent
-the answer is. The session variables are bound once, when a session is created,
+The first four are one question asked in four places, ordered by how recent
+the answer is. A claim is made by the person pressing send, seconds before the
+turn; everything after it was settled when the session was created. The session variables are bound once, when a session is created,
 and go on naming whoever opened it for as long as it lives; a Bot Chat is
 shared, so on a later turn that may well be somebody who is no longer typing.
 The live record is the one the turn runs on, so it is asked first. Nothing
@@ -859,6 +862,77 @@ itself:
   names is a gateway that cannot answer, which is the same as not being asked.
 
 The value comes back as `<provider>:<user id>`, which is the next section.
+
+### A shared chat names its opener on every turn, so the app claims the turn
+
+Everything above names the login that CREATED the session. The hook's
+`sender_id` is the agent's `_user_id`, set once from the record's
+`auth_user_id` when the agent is built. A second window attaching to the same
+session turns the record's transport slot into a fan-out that names no login,
+and the turn thread rebinds that slot, so nothing reachable during a turn says
+who pressed send. `turn_author` exists, but only for bot-to-bot deliveries. On a
+shared Bot Chat every rung therefore answers "the opener", on every turn.
+
+The one place the gateway does know who is sending is an authenticated HTTP
+request: the dashboard's auth middleware attaches the session it verified to
+`request.state.session`, with the same provider and user id a WebSocket ticket
+is minted from. So the app says so itself, just before `prompt.submit`:
+
+    POST /api/plugins/hermie/context/turn
+    {"session_id": "<runtime session id>"}
+
+and `pre_llm_call` asks for a claim before it asks anything else
+(`context/turn_claim.py`).
+
+- **The identity is the login's, never the body's.** The route builds
+  `<provider>:<user id>` from the verified session, stripped the way the server
+  builds `auth_user_id`, so a claim and a hook sender are the same kind of
+  string. A request that names no person — a gateway without a login, where the
+  legacy token admits everybody as nobody, or a service token — is refused with
+  403 and claims nothing. Malformed input is a 400; an unauthenticated request
+  never reaches the handler, because the middleware answers 401 first.
+- **Which id.** The app knows the runtime session id: the `session_id` that
+  `session.create` and `session.resume` return and `prompt.submit` takes. A
+  second window attaches to the same record, so both people submit with the
+  same one. During the turn Hermes binds it as `HERMES_UI_SESSION_ID`, and that
+  is the exact match. The hook itself gets the agent's durable session id
+  (which moves when a session is compacted), and a session also has a durable
+  key; the route records both beside the runtime id, read from the live table
+  without taking its lock, and they are matched only when a turn has no runtime
+  id bound. They never override an exact answer: two windows can hold two
+  runtime sessions on one stored session, and a turn that knows its runtime id
+  must not spend a claim made for the other.
+- **One claim, one turn, 90 seconds.** `pre_llm_call` spends the claim it
+  uses. Building the prompt and `/me` look at it without spending it, so a
+  prompt built for this turn already describes the claimer and the hook then
+  has nothing to add. A claim no turn spent is ignored and dropped 90 seconds
+  after it was made.
+- **Last claim wins.** Two people claiming one session inside the window leave
+  the later claim standing, and the next turn is resolved for that person. The
+  gateway runs one turn per session at a time and the app claims immediately
+  before it submits, so claim order is turn order almost always. Where it is
+  not: A claims, B claims, A's submit lands first — A's turn is resolved for B,
+  and B's turn falls back to the opener. The window for that is the gap between
+  one person's claim and their submit, which is one round trip.
+- **Limits, stated.** A prompt that does not start a turn of its own — a busy
+  session's input steered into the running turn — never reaches
+  `pre_llm_call`, so its claim is left for the next turn inside the window;
+  every app turn claims first, so that next turn's own claim replaces it, and a
+  turn that claims nothing (an older app, a bot-to-bot delivery) can inherit
+  it. A prompt queued behind a long turn may start after its claim has expired,
+  and is then resolved as before. A turn run by an isolated compute worker
+  (`dashboard.turn_isolation`, off by default) runs its hook in another process
+  that has no store, and is resolved as before as well.
+- **Bounded, in memory, one store.** At most 256 sessions hold a claim, oldest
+  dropped first; nothing is written to disk and nothing leaves the process.
+  Hermes imports this plugin for its hooks under one module name and the
+  dashboard loads a second copy of the package for its routes, so module state
+  would be two stores that never meet. The store lives in `sys.modules` under a
+  fixed, versioned name that both copies find.
+
+The capability is `context.turn_claim`. It is advertised wherever the context
+module is on, like the memory strings: whether the route is reachable is the
+dashboard's business, and an app that gets a 404 goes on without a claim.
 
 ### The two spellings of one id
 
@@ -1119,7 +1193,8 @@ over HTTP while the rest of the app's profile work stays on the socket.
 
 ## 9. The memory browser
 
-The one part of this plugin that answers HTTP. It mounts the way §1 describes —
+The first part of this plugin to answer HTTP; the turn claim in §4 is the only
+other. It mounts the way §1 describes —
 `dashboard/manifest.json` naming `plugin_api.py`, whose module-level `router`
 core mounts at `/api/plugins/hermie/` — and it is the exception to the rule in
 §1 rather than a change of mind about it. The alternatives were weighed and
@@ -1131,7 +1206,9 @@ roster paint, and the gateway's WebSocket has no memory method to borrow.
 **Whoever is signed in to the dashboard, and that is the whole of it.** Hermes
 authenticates a dashboard request with process-wide middleware and then hands
 every authenticated caller every route — core's `/api/memory/reset` included —
-with no role, owner or permission for a route to check. So these routes treat a
+with no role, owner or permission for a route to check. (It does say WHO was
+admitted, on `request.state.session`; `context/turn` in §4 uses that as the
+identity a turn is claimed for, and nothing here uses it as a permission.) So these routes treat a
 signed-in caller as an operator of the machine. There is no per-user
 authorization here because there is nothing to build one from, and a check that
 could only re-read the same shared token the middleware already checked would be
@@ -1241,6 +1318,13 @@ Unchanged from ADR-0017, with three differences, all of them reductions.
   gives a route no identity to check and core's own routes already work this
   way. It is a reduction only in that `memory.browse` turns it off, which is a
   switch core's `/api/memory` does not have. §9.
+- *A signed-in person can claim any session's next turn.* `context/turn` takes
+  any session id, and a claim decides whose context section the next turn of
+  that session carries. It cannot make a turn resolve to anybody but the caller
+  — the identity is the caller's own login — so the worst it does is put the
+  caller's own section in front of somebody else's turn, for one turn, within
+  90 seconds. That is the same trust every signed-in caller already has over
+  every route here. §4.
 - *`ui_meta` is per profile, not per user.* The app's key is per person now
   (`hermie-app:<user id>`), but `ui_meta` itself is not: every key on the
   profile is handed to every client that can read the profile, so two people on

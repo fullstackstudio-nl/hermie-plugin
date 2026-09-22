@@ -51,10 +51,11 @@ SECTION_VERSION = 1
 # is the provider and the second really is not.
 PROVIDER_PREFIX = re.compile(r"^([A-Za-z][A-Za-z0-9._-]*):(?!//)(.+)$")
 
-# Every rung of the resolution order, named once. The first three are where a
+# Every rung of the resolution order, named once. The first four are where a
 # sender can come from, in the order they are asked, and belong to the module
 # that asks; the rest are what `resolve` falls back to. They are here together because `/me` answers with
 # them and a person reading that answer should be reading one vocabulary.
+BY_CLAIM = "turn claim"
 BY_HOOK = "hook sender"
 BY_SESSION_VARS = "session variables"
 BY_LIVE_SESSION = "live session record"
@@ -63,7 +64,7 @@ BY_APP_DEFAULT = "app default"
 BY_ONLY_USER = "only registered person"
 BY_NOBODY = "nobody"
 
-SENDER_RUNGS = (BY_HOOK, BY_LIVE_SESSION, BY_SESSION_VARS)
+SENDER_RUNGS = (BY_CLAIM, BY_HOOK, BY_LIVE_SESSION, BY_SESSION_VARS)
 
 # Per-field caps, applied before the whole-section cap, so one long field cannot
 # crowd out the short ones that identify the person.

@@ -1,7 +1,7 @@
 {
   "name": "hermie",
   "label": "Hermie",
-  "description": "Backend routes for Hermie's memory browser. No dashboard UI of its own -- the app is the client.",
+  "description": "Backend routes for Hermie's memory browser and turn claims. No dashboard UI of its own -- the app is the client.",
   "icon": "Bell",
   "version": "0.5.0",
   "tab": { "hidden": true },

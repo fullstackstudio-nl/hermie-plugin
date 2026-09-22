@@ -103,6 +103,7 @@ that cannot work is worse than one that is absent.
 | `context.per_bot` | a per-bot note is rendered for the bot it names |
 | `context.live` | a context edit reaches an **open** chat on its next turn |
 | `context.orientation` | the section says where it came from and where to look for more |
+| `context.turn_claim` | the app may claim the next turn of a shared chat for the signed-in person (`POST /api/plugins/hermie/context/turn`) |
 | `command.me` | `/me` was accepted by this gateway |
 | `plugin.update_check` | the advert carries the newest release tag |
 | `memory.browse` | a profile's memory can be read over the dashboard's plugin routes |
@@ -249,6 +250,27 @@ logged in — the gateway's own record of this live session. A login carries the
 provider that issued it (`oidc:max`), the app registers the bare id (`max`), and
 either spelling finds the other.
 
+**In a shared chat Hermes names the opener on every turn.** The sender a hook is
+handed, the live record and the session variables all name the login that
+created the session, so a second person typing in the same Bot Chat would get
+the opener's context. The app therefore claims each turn just before it
+submits it, over the dashboard, as the person signed in:
+
+| | |
+|---|---|
+| `POST /api/plugins/hermie/context/turn` | `{"session_id": "<runtime session id>"}` → 204 |
+
+- **The identity is the dashboard login**, `<provider>:<user id>`, taken from
+  the request Hermes authenticated. Nothing in the body can name anyone.
+- **`session_id` is the runtime id** — the one `session.create` and
+  `session.resume` return and `prompt.submit` takes. A missing or malformed one
+  is a 400; a request that is not signed in as a person (a gateway without a
+  login, a service token) is a 403; an unauthenticated one never gets past
+  Hermes' own 401.
+- **One claim is one turn**, spent by that turn, ignored after 90 seconds. Two
+  people claiming the same session in that window: the later claim wins.
+- Nothing is written to disk; at most 256 sessions hold a claim at once.
+
 On a gateway with no authentication there is no identity to read anywhere, so it
 uses the default — which is the right answer when one person is registered, and
 no answer at all when several are.
@@ -344,7 +366,8 @@ uses, and the run is rooted below the root's `__init__.py`.
 ## Memory
 
 The app can browse and edit a profile's `MEMORY.md` and `USER.md`. This is the
-one part of the plugin that answers HTTP: a memory store is a request/response
+main part of the plugin that answers HTTP (the other is the turn claim under
+Device context): a memory store is a request/response
 surface over more data than a profile file should carry, so it mounts on the
 dashboard's own plugin router rather than going through `ui_meta` like
 everything else.

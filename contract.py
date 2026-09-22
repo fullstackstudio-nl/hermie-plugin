@@ -153,6 +153,14 @@ CAP_CONTEXT_LIVE = "context.live"
 # app that sees this can say the bot already knows — and one that does not can
 # keep telling people to spell it out, which is the truth on that gateway.
 CAP_CONTEXT_ORIENTATION = "context.orientation"
+# A person sending in a chat somebody else opened can say so, and the next turn
+# is resolved for them. Hermes names the login that OPENED a session to every
+# turn of it, so without this a shared Bot Chat hands every turn the opener's
+# section. The app claims the turn over the dashboard's plugin route
+# `POST /api/plugins/hermie/context/turn` just before `prompt.submit`; the
+# identity is the dashboard login's, never anything in the body. Like the
+# memory strings, this names an HTTP surface on the dashboard's port.
+CAP_CONTEXT_TURN_CLAIM = "context.turn_claim"
 CAP_COMMAND_ME = "command.me"
 # The memory browser and the profile-display-name route. These are the only
 # capabilities naming an HTTP surface rather than something reachable over the

@@ -74,6 +74,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 from .. import contract
 from .render import (
+    BY_CLAIM,
     BY_HOOK,
     BY_LIVE_SESSION,
     BY_SESSION_VARS,
@@ -96,12 +97,17 @@ from .render import (
 from . import me as me_command
 from .live_session import LiveSessions
 from .session_vars import (
+    SESSION_ID,
+    SESSION_KEY,
     SESSION_NAMES,
+    UI_SESSION_ID,
     USER_ID,
     USER_ID_ALT,
     USER_NAME,
     SessionVars,
 )
+from . import turn_claim
+from .turn_claim import TurnClaims
 
 logger = logging.getLogger(__name__)
 
@@ -154,10 +160,14 @@ class ContextModule:
         runtime,
         session_vars: Optional[SessionVars] = None,
         live_sessions: Optional[LiveSessions] = None,
+        claims: Optional[TurnClaims] = None,
     ):
         self.runtime = runtime
         self.session_vars = session_vars if session_vars is not None else SessionVars()
         self.live_sessions = live_sessions if live_sessions is not None else LiveSessions()
+        # Where the dashboard route leaves "the next turn is mine". Shared with
+        # the route's own copy of this package; see `turn_claim.py`.
+        self.claims = claims if claims is not None else turn_claim.shared()
         # session id -> what the frozen section says, as it was frozen. It
         # answers two questions: "is this sender the one the section already
         # covers?" and "does the section still say what the app says?".
@@ -225,8 +235,28 @@ class ContextModule:
             session_id, *(self.session_vars.read(name) for name in SESSION_NAMES)
         )
 
-    def sender_with_source(self, named: str = "", session_id: str = "") -> Tuple[str, str]:
-        """Who is asking, and which of the three rungs answered.
+    def claimed_sender(self, session_id: str = "", *, take: bool = False) -> str:
+        """The person who claimed this turn from the app, or nothing.
+
+        Matched by the runtime id Hermes binds for the turn when there is one,
+        and only then by the durable ids — the hook's own `session_id` and the
+        session key. See `turn_claim.py` for why the exact id is never
+        overridden by the fallback.
+
+        `take` spends the claim, and only the turn itself does that. Building
+        the prompt and `/me` look without spending, so the turn that follows
+        still finds it.
+        """
+        runtime_id = self.session_vars.read(UI_SESSION_ID)
+        durable = (session_id, self.session_vars.read(SESSION_ID), self.session_vars.read(SESSION_KEY))
+        if take:
+            return self.claims.take(runtime_id, durable)
+        return self.claims.peek(runtime_id, durable)
+
+    def sender_with_source(
+        self, named: str = "", session_id: str = "", *, take: bool = False
+    ) -> Tuple[str, str]:
+        """Who is asking, and which of the four rungs answered.
 
         This is the first half of the resolution order; `resolve` in
         `render.py` carries the rest (the configured default, the app's own,
@@ -241,7 +271,18 @@ class ContextModule:
         is the one this turn runs on. So the record is asked first: a stale answer that is cheap is still the wrong person,
         and reading the record is a dict lookup in this very process rather than
         anything that touches a disk or a socket.
+
+        **A claim comes before all three**, including the hook, for the same
+        reason taken one step further: on a dashboard session the hook's sender
+        IS the session's creator (`_user_id` is set once from `auth_user_id`
+        when the agent is built), so on a shared chat it names the opener on
+        every turn. A claim is the only thing that names the person who pressed
+        send, because it was made by their own authenticated request moments
+        before this turn was submitted.
         """
+        claimed = self.claimed_sender(session_id, take=take)
+        if claimed:
+            return claimed, BY_CLAIM
         if named:
             return named, BY_HOOK
         found = self.live_sender(session_id)
@@ -274,6 +315,12 @@ class ContextModule:
             # Rendered by every path this module has, so it is claimed wherever
             # the module is on at all.
             contract.CAP_CONTEXT_ORIENTATION,
+            # The store and the rung are part of this module, so wherever it is
+            # on a claim is honoured. Whether the route that writes one is
+            # reachable is the dashboard's business: an app that sees this and
+            # gets a 404 is talking to a gateway whose dashboard did not mount
+            # the plugin's routes, and goes on without a claim.
+            contract.CAP_CONTEXT_TURN_CLAIM,
         ]
         if any(user.per_bot for user in self.section().users.values()):
             found.append(contract.CAP_CONTEXT_PER_BOT)
@@ -596,7 +643,10 @@ class ContextModule:
         """
         try:
             session_id = str(kwargs.get("session_id") or "")
-            sender_id = self.sender(str(kwargs.get("sender_id") or ""), session_id)
+            # The claim, if there is one, is spent here: one claim, one turn.
+            sender_id, _source = self.sender_with_source(
+                str(kwargs.get("sender_id") or ""), session_id, take=True
+            )
             # One read of the app's metadata per turn at most, shared by the
             # shim and the top-up, and skipped entirely when neither needs it.
             cache: List[ContextSection] = []

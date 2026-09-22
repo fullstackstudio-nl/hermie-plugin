@@ -125,8 +125,8 @@ def test_the_router_adds_no_auth_of_its_own(routes):
     """Stated as a test so nobody "fixes" it by inventing a check that lies.
 
     A dependency here could only re-read the same shared token the middleware
-    already checked. It could not identify a person, because no route on this
-    gateway is given one.
+    already checked. The one route that needs to know who is calling reads the
+    session the middleware already verified; it checks no permission with it.
     """
     assert not routes.router.dependencies
 
@@ -209,6 +209,8 @@ def test_the_mounted_routes_are_the_ones_that_were_asked_for(routes):
         ("/memory/raw", ("GET",)),
         ("/memory/edit", ("POST",)),
         ("/profiles/{name}", ("PATCH",)),
+
+        ("/context/turn", ("POST",)),
     }
 
 

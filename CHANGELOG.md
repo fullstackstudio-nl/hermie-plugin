@@ -20,6 +20,28 @@ people.
   403 per profile via the new `profiles.edit` setting, off means read-only the
   same way `memory.edit` does.
 
+- `context.turn_claim` — **the person typing in a shared chat gets their own
+  context, not the opener's.** Hermes names the login that created a session to
+  every hook for the life of that session: the hook's `sender_id` is set once
+  from the record's `auth_user_id`, a second window leaves the record naming
+  nobody new, and the turn thread names nobody at all. So every rung the plugin
+  had answered "whoever opened the chat", on every turn, whoever typed it.
+
+  The app now claims the turn just before `prompt.submit`, with
+  `POST /api/plugins/hermie/context/turn` and `{"session_id": "<runtime session
+  id>"}`, and `pre_llm_call` asks for a claim before it asks anything else. The
+  identity is the dashboard login the request was authenticated as, spelled
+  `<provider>:<user id>` like the gateway spells it; nothing in the body can
+  name anyone. 204 on success, 400 for a missing or malformed id, 403 for a
+  request that is not signed in as a person. A claim is spent by the one turn
+  that uses it and ignored after 90 seconds; two claims on one session inside
+  that window leave the later one standing. The turn is matched by the runtime
+  id Hermes binds for it, with the durable key and agent session id as a
+  fallback only where no runtime id is bound. Building the prompt and `/me` read
+  a claim without spending it, and `/me` names it as the rung that answered.
+  At most 256 claims are held, in memory, in one store both copies of the
+  plugin share; nothing is written and nothing leaves the process.
+
 - `memory.raw` — **a backend can be read as it is stored.** The three browsing
   routes all answer a memory the store has already parsed into entries, which is
   the shape to edit it in and the wrong shape for the question "what is in

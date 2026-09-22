@@ -23,6 +23,7 @@ from typing import Any, List, Optional
 
 from .render import (
     BY_APP_DEFAULT,
+    BY_CLAIM,
     BY_CONFIGURED,
     BY_HOOK,
     BY_LIVE_SESSION,
@@ -45,6 +46,7 @@ ABOUT_CHARS = 240
 
 # One sentence per rung of the resolution order.
 RUNGS = {
+    BY_CLAIM: "the person who claimed this turn from the app, signed in to the dashboard",
     BY_HOOK: "the sender Hermes handed the hook",
     BY_LIVE_SESSION: "the login the gateway admitted this session under",
     BY_SESSION_VARS: "the login bound into this session's variables",
