@@ -93,13 +93,22 @@ def app_meta_with(*, registrations=None, seen=None, context_users=None):
     return meta
 
 
+# The switches a REAL row carries: the five the app's settings screen has
+# shipped. Filling in every type the gateway knows about would have been a
+# fixture for a device that does not exist — and while the reader parsed only
+# five, it was also a fixture that quietly disagreed with itself. A row gets the
+# two cron switches once the app writes them, which is what
+# `test_events.py` pins from a parsed row rather than from here.
+APP_ROW_TYPES = ("message", "request", "cron", "turn_done", "turn_failed")
+
+
 def expo_registration(**overrides):
     entry = {
         "v": 1,
         "transport": "expo",
         "token": "ExponentPushToken[abcdefghijklmnopqrstuv]",
         "platform": "ios",
-        "types": {name: True for name in events.TYPES},
+        "types": {name: True for name in APP_ROW_TYPES},
         "preview": False,
         "updatedAt": 1789957143,
     }

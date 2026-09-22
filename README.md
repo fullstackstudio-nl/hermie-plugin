@@ -95,8 +95,8 @@ that cannot work is worse than one that is absent.
 | `push.session_kind` | a payload says whether its session is the bot's chat, a branch, or neither |
 | `push.type.turn_done` | "a turn finished" is switched on |
 | `push.type.turn_failed` | "a turn failed" is switched on |
-| `push.type.cron_done` | "a scheduled job finished" is switched on |
-| `push.type.cron_failed` | "a scheduled job failed" is switched on |
+| `push.type.cron_done` | "a scheduled job finished" is switched on, and a device may ask for it |
+| `push.type.cron_failed` | "a scheduled job failed" is switched on, and a device may ask for it |
 | `push.cron.signal` | a cron run is recognised by the scheduler's marker, not by a guess |
 | `ui_meta.per_user` | `hermie-app:<user id>` is read, so the app may move its bag |
 | `context.system_prompt` | context is put into the bot's system prompt |
@@ -106,6 +106,17 @@ that cannot work is worse than one that is absent.
 | `plugin.update_check` | the advert carries the newest release tag |
 | `memory.browse` | a profile's memory can be read over the dashboard's plugin routes |
 | `memory.edit` | and written |
+
+A device's own switches are read over **every** type in the payload table above,
+so a registration that says `cron_done: true` or `cron_failed: true` is honoured
+— for a while those two were sent by this gateway but could not be asked for. A
+type a registration does not name is **off**, and it is never inferred from a
+neighbour: a device that registered before the app had the two cron switches
+keeps exactly the notifications it gets today, and `cron` ("a job delivered
+something") does not turn on "a job you were not watching ended". The app's own
+two switches default to on, so a device picks them up the next time it
+registers. Above both sits `push.types`, the gateway-wide ceiling a device
+cannot switch its way past — and a mute still silences the lot.
 
 An absent list means an absent plugin. A plugin too old to publish one, a
 plugin that is installed but disabled, and no plugin at all are

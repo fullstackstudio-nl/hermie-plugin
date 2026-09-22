@@ -42,7 +42,8 @@ read for one more version. The readers are ``push/registrations.py`` and
             endpoint: "..."         # webpush only, with keys.p256dh + keys.auth
             platform: ios
             types: {message: true, request: true, cron: true,
-                    turn_done: false, turn_failed: false}
+                    cron_done: true, cron_failed: true,
+                    turn_done: false, turn_failed: false}   # absent = off
             preview: false
             gatewayKey: bf796761db84e312   # FNV-1a over the origin it registered against
             updatedAt: 1789957143

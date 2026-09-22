@@ -32,14 +32,27 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from .cron import Cron, declared_failure
-from .registrations import Registration, Section, effective_types, is_muted, looking_at
+from .registrations import (
+    PUSH_TYPES,
+    Registration,
+    Section,
+    effective_types,
+    is_muted,
+    looking_at,
+)
 
 PAYLOAD_VERSION = 1
 
-# Everything the app is told about. Hermes fires no hook when a bot-to-bot
-# message arrives (see DESIGN.md), so there is no type for one: a switch that
-# turns nothing on is worse than no switch.
-TYPES = ("message", "request", "cron", "cron_done", "cron_failed", "turn_done", "turn_failed")
+# Everything the app is told about, which is exactly what a device can ask for:
+# the reader's own list under the name the sender uses, rather than a second
+# copy of it. The two were separate tuples once and had drifted apart — the
+# sender knew about `cron_done` and `cron_failed`, the reader did not, and a
+# registration asking for them was parsed as asking for nothing.
+#
+# Hermes fires no hook when a bot-to-bot message arrives (see DESIGN.md), so
+# there is no type for one: a switch that turns nothing on is worse than no
+# switch.
+TYPES = PUSH_TYPES
 
 # Types a device is told about even when it says somebody is watching.
 #

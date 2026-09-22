@@ -33,13 +33,29 @@ from .gateway_key import is_gateway_key
 
 SECTION_VERSION = 1
 
-# Every event a device can ask about, and every one it can be sent. Absent means
-# OFF, so a device that predates a type never starts receiving it.
+# Every event a device can ask about, and every one it can be sent — ONE list,
+# which `push/events.py` re-exports as `TYPES`. They were two tuples once, and
+# the shorter one was this: a row's `cron_done` and `cron_failed` were dropped
+# on the way in, so two types the gateway advertised could be sent but never
+# asked for.
+#
+# Absent still means OFF, and it is never inferred from a neighbour. A device
+# registered before the app had the two cron switches keeps exactly the
+# behaviour it has today, and somebody who turned `cron` on never quietly
+# agreed to be told about every job that finished as well.
 #
 # ADR-0017 also listed a bot-to-bot `dm`. Hermes fires no hook when one arrives,
 # so nothing can produce it — the type is gone rather than kept as a switch that
 # turns nothing on.
-PUSH_TYPES = ("message", "request", "cron", "turn_done", "turn_failed")
+PUSH_TYPES = (
+    "message",
+    "request",
+    "cron",
+    "cron_done",
+    "cron_failed",
+    "turn_done",
+    "turn_failed",
+)
 
 
 

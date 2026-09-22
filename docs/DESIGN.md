@@ -430,10 +430,45 @@ says this gateway will obey one, which is what the app needs before it offers
 the switch. A copy of the map under `push.mutes` is read as well, for an app
 that files it with the rest of the push settings; the top-level one wins.
 
+### The switches a device carries
+
+A registration's `types` bag is read over **every** type this plugin can send
+— the seven in the hook table at the top of this section:
+
+```yaml
+hermie-app:owner:
+  push:
+    registrations:
+      <installation id>:
+        types: {message: true, request: true, cron: true,
+                cron_done: true, cron_failed: true,
+                turn_done: true, turn_failed: true}
+```
+
+There is one list of type names and both halves use it — `PUSH_TYPES` in
+`push/registrations.py`, which `push/events.py` re-exports as `TYPES`. It was
+two tuples once and they had drifted: the sender knew about `cron_done` and
+`cron_failed`, the reader did not, and a row asking for either was parsed as
+asking for nothing. Two types this gateway advertises and can send were
+unreachable from a device, which is the kind of gap nobody reports because it
+looks like silence.
+
+**An absent type is OFF, and it is never inferred from a neighbour.** A device
+registered before the app had the two cron switches keeps exactly the behaviour
+it has today; nothing starts buzzing because a gateway was updated. In
+particular `cron` does not imply them: that one is "a scheduled job delivered
+something", which is a different question from "a job you were not watching
+ended". The app supplies the other direction — its two new switches default to
+on — so a device gets them when it next writes its row.
+
+Above all of this sit the two rules that do not move: `push.types` is the
+gateway-wide ceiling a device cannot switch its way past, and a mute is the
+strongest word in the room.
+
 ### Per-chat switches
 
-A device's registration carries five switches, and a person can override any of
-them for one chat. The app writes those overrides beside the registrations,
+A device's registration carries a switch per type, and a person can override any
+of them for one chat. The app writes those overrides beside the registrations,
 because the decision belongs to the READER rather than to a device — somebody
 who silences one bot's cron deliveries means it on their phone and on their Mac:
 
@@ -446,8 +481,8 @@ hermie-app:owner:
 ```
 
 The bag is **partial on purpose**. A type it does not name follows the global
-switch *as the global switch moves*; a full copy of all five would freeze every
-type at whatever it happened to be on the day somebody touched one of them. The
+switch *as the global switch moves*; a full copy of every type would freeze each
+one at whatever it happened to be on the day somebody touched one of them. The
 fold is `effective_types` in `push/registrations.py`, written as the Python half
 of `effectivePushTypes` in the app's `packages/gateway-client/src/push.ts` — the
 app's switch screen and this gateway's decision must not be two rules that

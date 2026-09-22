@@ -93,6 +93,17 @@ people.
   the job itself is decided after the agent is gone and fires no hook, so it is
   out of reach and the README says so.
 
+- A device's own `types` are read over **every** type this plugin can send, so a
+  registration that says `cron_done: true` or `cron_failed: true` is honoured.
+  The reader and the sender kept separate lists of type names and the reader's
+  was the shorter one, which left the two cron endings above sendable but
+  impossible to ask for. There is one list now. A type a row does not name is
+  still **off** and is never inferred from `cron` — no device starts receiving
+  something it never asked for because a gateway was updated — and the app's own
+  two switches, which default to on, reach a device when it next registers.
+  `push.types` remains the gateway-wide ceiling and a mute still outranks all of
+  it.
+
 - `context.live` — a context edit made while a chat is open reaches that chat on
   its next turn. Hermes renders a plugin's system prompt section once per
   session and replays the bytes it persisted, and a plugin cannot ask for a
