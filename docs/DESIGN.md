@@ -1335,8 +1335,7 @@ unspent could land on the next turn from anybody; the section peeked at a
 claim while the prompt was built and then replayed a caution-less profile for
 the life of the chat; and `BY_PLATFORM` said "signed in as" about a cron run
 and a bot handoff. The decision, recorded here until the sections above are
-rewritten to match the code (plan:
-`hermes-agent-companion/.claude/plans/who-sent-this-turn.md`):
+rewritten to match the code:
 
 1. **The proof is the text.** `pre_llm_call` is handed `user_message`, the
    clean prompt text (`agent/turn_context.py::_collect_pre_llm_call_context`).
