@@ -69,6 +69,7 @@ copies find.
 
 from __future__ import annotations
 
+import logging
 import re
 import sys
 import threading
@@ -77,6 +78,8 @@ import types
 from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any, Callable, FrozenSet, Iterable, Optional
+
+logger = logging.getLogger(__name__)
 
 # How long a claim stands. The app claims immediately before `prompt.submit`,
 # so the claim is normally spent within a second or two; the rest is room for a
@@ -103,9 +106,19 @@ REGISTRY = "hermie_turn_claims"
 # The shape of the store kept in that slot. The slot holds one store per shape,
 # so a copy of the plugin that disagrees about the shape — an update loaded
 # beside an older copy that has not been unloaded — gets a fresh store rather
-# than methods from a class it does not know. ANY change to `TurnClaims` or
-# `Claim` that another copy could observe means bumping this.
+# than methods it does not know. ANY change to `TurnClaims` or `Claim` that
+# another copy could observe (a method, its arguments, what it returns) means
+# bumping this.
+#
+# The shape number is what is trusted, never the class: every copy of this
+# package defines its own `TurnClaims`, so an `isinstance` check against the
+# asking copy's class fails for the store the other copy made, and the two
+# copies would silently stop sharing.
 SHAPE = 1
+
+# What a store must answer to be used at all. A guard against a slot somebody
+# else filled, not a check of which copy made it.
+STORE_METHODS = ("claim", "peek", "take", "take_if")
 
 
 @dataclass(frozen=True)
@@ -162,6 +175,24 @@ class TurnClaims:
         """The claimed identity for this turn, left in place."""
         return self._find(session_id, aliases, spend=False)
 
+    def take_if(
+        self, session_id: str, aliases: Iterable[str], accept: Callable[[str], bool]
+    ) -> str:
+        """Spend the claim for this turn only if *accept* says it applies.
+
+        The test and the spend happen under one hold of the lock, so the claim
+        that is judged is the claim that is spent: a newer claim landing in
+        between cannot be spent on the strength of the older one's test. A
+        claim *accept* refuses is left where it is. *accept* must not call back
+        into the store.
+        """
+        with self.lock:
+            self._expire()
+            key = self._key(session_id, [alias for alias in aliases if alias])
+            if key is None or not accept(self.claims[key].identity):
+                return ""
+            return self.claims.pop(key).identity
+
     def _find(self, session_id: str, aliases: Iterable[str], *, spend: bool) -> str:
         with self.lock:
             self._expire()
@@ -210,15 +241,23 @@ def shared() -> TurnClaims:
         holder = sys.modules.setdefault(REGISTRY, fresh)
     stores = getattr(holder, "stores", None)
     if not isinstance(stores, dict):
-        return _FALLBACK
+        return _fallback("the shared slot holds no store table")
     store = stores.get(SHAPE)
-    if not isinstance(store, TurnClaims) and store is not None:
-        # Same shape number, different class: a copy that forgot to bump
-        # `SHAPE`. Not ours to use.
-        return _FALLBACK
     if store is None:
         store = stores.setdefault(SHAPE, TurnClaims())
+    if not all(callable(getattr(store, name, None)) for name in STORE_METHODS):
+        return _fallback("the shared store of this shape does not answer to it")
     return store
+
+
+def _fallback(reason: str) -> TurnClaims:
+    """A store only this copy sees, said out loud: claims will not cross copies."""
+    logger.warning(
+        "hermie: using a private turn-claim store (%s); a claim made through the "
+        "dashboard will not reach a turn",
+        reason,
+    )
+    return _FALLBACK
 
 
 def valid_session_id(value: Any) -> Optional[str]:

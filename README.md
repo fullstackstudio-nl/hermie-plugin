@@ -272,7 +272,7 @@ submits it, over the dashboard, as the person signed in:
 - **One claim is one model turn**, spent by that turn, ignored after 30
   seconds. Two people claiming the same session in that window: the later
   claim wins. Claim only for a `prompt.submit` that starts a model turn, never
-  for a slash command; `/me` spends any claim it finds.
+  for a slash command: nothing spends a claim made before a command.
 - **A claim replaces only a dashboard login.** A sender Hermes names as a
   messaging platform's user or a bot is left as it is.
 - Nothing is written to disk; at most 256 sessions hold a claim at once.

@@ -8,8 +8,11 @@ tests pin both ends: the store the claim lands in, the route that writes it, and
 the hook that spends it.
 """
 
+import importlib
+import importlib.util
 import sys
 import types
+from pathlib import Path
 
 import pytest
 
@@ -197,10 +200,90 @@ def test_an_alias_is_matched_only_when_the_runtime_id_is_unknown():
     assert claims.take("", aliases=("durable-1",)) == SENDER
 
 
-def test_the_store_is_shared_by_every_copy_of_the_plugin():
-    """The dashboard imports the plugin under one name, Hermes under another."""
-    assert turn_claim.shared() is turn_claim.shared()
-    assert isinstance(turn_claim.shared(), TurnClaims)
+def load_copy(name):
+    """The whole package again, under another module name, as Hermes loads it."""
+    root = Path(__file__).resolve().parent.parent
+    spec = importlib.util.spec_from_file_location(
+        name, root / "__init__.py", submodule_search_locations=[str(root)]
+    )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return importlib.import_module(f"{name}.context.turn_claim")
+
+
+@pytest.fixture
+def two_copies(monkeypatch):
+    """The hooks' copy and the dashboard's copy, in one process, with an empty slot."""
+    monkeypatch.delitem(sys.modules, turn_claim.REGISTRY, raising=False)
+    names = ("hermie_hooks_copy", "hermie_dashboard_copy")
+    yield tuple(load_copy(name) for name in names)
+    for key in [key for key in sys.modules if key.split(".")[0] in names]:
+        del sys.modules[key]
+
+
+def test_a_claim_made_through_one_copy_is_spent_through_the_other(two_copies):
+    """The dashboard's route and Hermes' hook run different copies of this package.
+
+    Each copy has its own `TurnClaims` class. A store that only one of them
+    accepts is two stores, and a claim made through the route never reaches the
+    turn.
+    """
+    hooks, dashboard = two_copies
+    assert hooks.TurnClaims is not dashboard.TurnClaims
+
+    dashboard.shared().claim(SID, SENDER)
+
+    assert hooks.shared() is dashboard.shared()
+    assert hooks.shared().peek(SID) == SENDER
+    assert hooks.shared().take(SID) == SENDER
+    assert dashboard.shared().peek(SID) == ""
+
+
+def test_the_copies_agree_whichever_asks_first(two_copies):
+    hooks, dashboard = two_copies
+    hooks.shared().claim(SID, SENDER)
+
+    assert dashboard.shared().take(SID) == SENDER
+
+
+def test_the_private_store_is_said_out_loud(monkeypatch, caplog):
+    monkeypatch.setitem(sys.modules, turn_claim.REGISTRY, types.ModuleType(turn_claim.REGISTRY))
+
+    with caplog.at_level("WARNING"):
+        turn_claim.shared()
+
+    assert "private turn-claim store" in caplog.text
+
+
+def test_an_empty_sender_is_stood_in_for_only_on_a_dashboard_turn():
+    """A scheduled or background turn has no runtime id and no sender: not claimed."""
+    claims = TurnClaims(clock=Clock())
+    hermes = FakeSessionContext(**{SESSION_KEY: "key-1"})
+    module = module_with(claims, hermes)
+    claims.claim(SID, SENDER, aliases=("key-1",))
+
+    assert module.sender_with_source("", "key-1", take=True) == ("", "")
+    assert claims.peek(SID) == SENDER
+
+
+def test_an_empty_sender_on_a_dashboard_turn_is_the_claimer():
+    claims = TurnClaims(clock=Clock())
+    module = module_with(claims, FakeSessionContext(**{UI_SESSION_ID: SID}))
+    claims.claim(SID, SENDER)
+
+    assert module.sender_with_source("", "durable-1", take=True) == (SENDER, BY_CLAIM)
+
+
+def test_a_newer_claim_is_judged_on_its_own_before_it_is_spent():
+    """The claim spent is the claim judged, so a refused one is never spent."""
+    claims = TurnClaims(clock=Clock())
+    claims.claim(SID, SENDER)
+
+    assert claims.take_if(SID, (), lambda identity: False) == ""
+    assert claims.peek(SID) == SENDER
+    assert claims.take_if(SID, (), lambda identity: identity == SENDER) == SENDER
+    assert len(claims) == 0
 
 
 def test_a_store_of_another_shape_is_not_used(monkeypatch):
@@ -437,8 +520,6 @@ def test_the_advert_carries_the_capability():
 
 fastapi = pytest.importorskip("fastapi", reason="FastAPI ships with the Hermes runtime")
 
-import importlib.util  # noqa: E402
-from pathlib import Path  # noqa: E402
 
 PREFIX = "/api/plugins/hermie"
 

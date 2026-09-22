@@ -917,23 +917,31 @@ and `pre_llm_call` asks for a claim before it asks anything else
   knows its runtime id must not spend a claim made for the other.
 - **A claim stands in only for a dashboard login.** It exists to correct one
   thing, the dashboard naming the opener as every turn's sender, so it replaces
-  a hook sender only when there is none or it is spelled as a dashboard login:
+  a hook sender only when there is none on a turn with a runtime id bound (a
+  dashboard turn; a scheduled or background turn with neither is not the turn
+  anybody claimed), or when it is spelled as a dashboard login:
   a provider prefix the dashboard signs people in with (its registry of sign-in
   providers, read from `sys.modules`, never imported), the claimer's own or the
   opener's. A messaging platform's user id or a bot's name is somebody Hermes
   named correctly, and the claim is left unspent for the turn it was made for.
+  The test is worked out before the store's lock is taken and applied under
+  it, so the claim that is spent is always the claim that was judged.
 - **One claim, one model turn, 30 seconds.** `pre_llm_call` spends the claim it
   uses. Building the prompt looks at it without spending it, so a prompt built
   for this turn already describes the claimer and the hook then has nothing to
-  add. `/me` reads it and then spends it, because no model turn follows a
-  command. A claim nothing spent is ignored and dropped 30 seconds after it was
+  add. A claim nothing spent is ignored and dropped 30 seconds after it was
   made: the app claims immediately before it submits, so a claim is normally
   spent within a second or two, and the window is kept as short as a slow
   network allows because an unspent claim is the whole of the exposure below.
-- **The app claims for a model turn and nothing else.** A claim is for a
-  `prompt.submit` that starts a model turn. The app must not claim before a
-  slash command: a command other than `/me` is answered without `pre_llm_call`
-  and without passing through this plugin, so nothing would spend it.
+- **The app claims for a model turn and nothing else — this is the guarantee.**
+  A claim is for a `prompt.submit` that starts a model turn. The app must not
+  claim before a slash command: a command is answered without `pre_llm_call`,
+  so no turn spends the claim, and it would wait for the next turn from a
+  client that does not claim. `/me` does try to spend the claim it finds, but
+  that is best effort and on today's dashboard it finds nothing: Hermes runs a
+  plugin command on its RPC pool (`slash.exec`, `command.dispatch`) without
+  binding the session variables, so there is no runtime id to find the claim
+  by. The plugin cannot close this; the app's rule does.
 - **Last claim wins.** Two people claiming one session inside the window leave
   the later claim standing, and the next turn is resolved for that person. The
   gateway runs one turn per session at a time and the app claims immediately
@@ -956,9 +964,15 @@ and `pre_llm_call` asks for a claim before it asks anything else
   Hermes imports this plugin for its hooks under one module name and the
   dashboard loads a second copy of the package for its routes, so module state
   would be two stores that never meet. The store lives in `sys.modules` under a
-  fixed name that both copies find, one store per `SHAPE`: a copy that
-  disagrees about the store's shape gets a fresh store rather than methods from
-  a class it does not know, and any change to the store's shape bumps `SHAPE`.
+  fixed name that both copies find, one store per `SHAPE`. What is trusted is
+  the shape number, never the class: each copy defines its own `TurnClaims`, so
+  a class check would make the second copy to ask refuse the first copy's store
+  and the two would silently stop sharing. A test loads the package under two
+  module names in one process and claims through one, spends through the other.
+  A copy that disagrees about the shape gets a fresh store, any change to the
+  store's shape bumps `SHAPE`, and a store this code cannot use at all is
+  replaced by a private one with a warning in the log, because a claim that
+  cannot cross copies is a feature that has quietly stopped working.
 
 The capability is `context.turn_claim`. It is advertised wherever the context
 module is on, like the memory strings: whether the route is reachable is the

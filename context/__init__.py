@@ -252,58 +252,70 @@ class ContextModule:
         durable = (session_id, self.session_vars.read(SESSION_ID), self.session_vars.read(SESSION_KEY))
         return runtime_id, durable
 
-    def claim_may_stand_in_for(self, named: str, claimed: str, session_id: str = "") -> bool:
+    def stand_in_test(self, named: str, runtime_id: str, session_id: str = "") -> Callable[[str], bool]:
         """Whether a claim may replace the sender the hook was handed.
 
         A claim exists to correct one thing: the dashboard naming the login that
-        OPENED a session as the sender of every turn. So it stands in for no
-        sender at all, and for a sender spelled as a dashboard login — a
-        provider prefix the dashboard signs people in with, the claimer's own
-        or the opener's. A sender spelled any other way is somebody the
-        dashboard did not admit — a messaging platform's user, a bot handing a
-        turn to another — and Hermes named them correctly; a claim made from a
-        browser is not evidence against that.
+        OPENED a session as the sender of every turn. So it stands in for a
+        sender spelled as a dashboard login — a provider prefix the dashboard
+        signs people in with, the claimer's own or the opener's. A sender
+        spelled any other way is somebody the dashboard did not admit — a
+        messaging platform's user, a bot handing a turn to another — and Hermes
+        named them correctly; a claim made from a browser is not evidence
+        against that.
+
+        It stands in for NO sender only on a turn with a runtime id bound, which
+        is a dashboard turn. A turn with neither a sender nor a runtime id — a
+        scheduled job, background work matched only through the aliases — is
+        not the turn anybody claimed.
+
+        Everything that reaches outside the store is worked out here, before
+        the store's lock is taken; the test it returns is pure.
         """
         if not named:
-            return True
+            return lambda claimed: bool(runtime_id)
         match = PROVIDER_PREFIX.match(named)
         if match is None:
-            return False
+            return lambda claimed: False
+        prefix = match.group(1)
         providers = set(self.auth_providers() or ())
-        for login in (claimed, self.live_sender(session_id)):
-            found = PROVIDER_PREFIX.match(login or "")
-            if found is not None:
-                providers.add(found.group(1))
-        return match.group(1) in providers
+        found = PROVIDER_PREFIX.match(self.live_sender(session_id) or "")
+        if found is not None:
+            providers.add(found.group(1))
+
+        def accept(claimed: str) -> bool:
+            own = PROVIDER_PREFIX.match(claimed or "")
+            return prefix in providers or (own is not None and own.group(1) == prefix)
+
+        return accept
 
     def claimed_sender(self, named: str = "", session_id: str = "", *, take: bool = False) -> str:
         """The person who claimed this turn from the app, or nothing.
 
         `take` spends the claim, and only the turn itself does that. Building
-        the prompt and `/me` look without spending, so the turn that follows
-        still finds it. A claim that may not stand in for the hook's sender is
-        left where it is, unspent: the turn it was made for has not run yet.
+        the prompt looks without spending, so the turn that follows still finds
+        it. A claim that may not stand in for the hook's sender is left where it
+        is, unspent: the turn it was made for has not run yet. Judging and
+        spending are one step in the store (`take_if`), so the claim spent is
+        always the claim that was judged.
         """
         runtime_id, durable = self.turn_ids(session_id)
+        accept = self.stand_in_test(named, runtime_id, session_id)
+        if take:
+            return self.claims.take_if(runtime_id, durable, accept)
         claimed = self.claims.peek(runtime_id, durable)
-        if not claimed or not self.claim_may_stand_in_for(named, claimed, session_id):
-            return ""
-        if not take:
-            return claimed
-        taken = self.claims.take(runtime_id, durable)
-        # Another claim may have landed between the look and the take; it is
-        # the newer one, and it passes the same test or is not used.
-        if taken and (taken == claimed or self.claim_may_stand_in_for(named, taken, session_id)):
-            return taken
-        return ""
+        return claimed if claimed and accept(claimed) else ""
 
     def discard_claim(self, session_id: str = "") -> None:
-        """Spend this session's claim without using it.
+        """Spend this session's claim without using it, where it can be found.
 
         For work the plugin answers itself without a model turn, `/me` first
-        among it. A claim sent before a command is a claim no turn will spend,
-        and left alone it would be spent by the next turn from a client that
-        does not claim at all.
+        among it. Best effort, and knowingly so: Hermes runs a plugin command
+        on its RPC pool without binding the session variables, so on the
+        dashboard today there is no runtime id to find the claim by and this
+        spends nothing. The guarantee is the app's — it never claims for a
+        slash command (DESIGN.md) — and this only helps on a gateway that binds
+        the session for a command.
         """
         runtime_id, durable = self.turn_ids(session_id)
         self.claims.take(runtime_id, durable)
@@ -328,7 +340,7 @@ class ContextModule:
         anything that touches a disk or a socket.
 
         **A claim comes before all three**, including a hook sender spelled as
-        a dashboard login (`claim_may_stand_in_for`), for the same
+        a dashboard login (`stand_in_test`), for the same
         reason taken one step further: on a dashboard session the hook's sender
         IS the session's creator (`_user_id` is set once from `auth_user_id`
         when the agent is built), so on a shared chat it names the opener on

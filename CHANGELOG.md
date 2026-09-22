@@ -41,11 +41,14 @@ people.
   by the runtime id Hermes binds for it, and only where none is bound by the
   durable key and agent session id the route read off the live record. A claim
   replaces a hook sender only when that sender is spelled as a dashboard login,
-  so a messaging platform's user or a bot is never overridden. Building the
-  prompt reads a claim without spending it; `/me` reads it, names it as the rung
-  that answered, and spends it, since no model turn follows a command. The app
-  claims for a `prompt.submit` that starts a model turn and never for a slash
-  command.
+  so a messaging platform's user or a bot is never overridden, and it stands in
+  for an empty sender only on a turn with a runtime id bound. Building the
+  prompt reads a claim without spending it; `/me` names it as the rung that
+  answered and spends it where it can find it. The app claims for a
+  `prompt.submit` that starts a model turn and never for a slash command, which
+  is what keeps a claim from outliving its turn. The hooks and the dashboard
+  run separate copies of the package, and the store is shared between them by
+  its shape number, never by class.
   At most 256 claims are held, in memory, in one store both copies of the
   plugin share; nothing is written and nothing leaves the process.
 
