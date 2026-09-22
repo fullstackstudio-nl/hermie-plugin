@@ -456,22 +456,32 @@ def test_a_turn_without_a_runtime_id_never_matches_a_claim_key():
     assert claims.take("", aliases=("agent:main:telegram:dm:12345",)) == ""
 
 
-def test_building_the_prompt_reads_the_claim_without_spending_it():
-    """The section built for this turn describes the claimer; the hook then agrees."""
+def test_building_the_prompt_ignores_a_claim_that_is_already_sitting_there():
+    """The frozen section never asks the claim store (Task 1 of the plan): a
+    claim answers for a submit, and this render runs before any turn of the
+    session has, so a claim already sitting there proves nothing about it. The
+    prompt is built for the opener the session variables name, cautioned,
+    exactly as if no claim had been made at all — and the claim itself is left
+    untouched for the turn it actually was made for.
+    """
     claims = TurnClaims(clock=Clock())
     hermes = FakeSessionContext(**{UI_SESSION_ID: SID, USER_ID: OPENER})
     module = module_with(claims, hermes)
 
     claims.claim(SID, SENDER)
     text = opened_by_the_opener(module)
-    assert "Sam" in text and "Otto" not in text
-    assert claims.peek(SID) == SENDER
+    assert "Otto" in text and "Sam" not in text
+    assert claims.peek(SID) == SENDER, "the frozen section spent or read a claim it must not touch"
 
-    # The profile needs no topping up — the prompt already carries the
-    # claimer's. What the turn still adds is the one sentence that may not be
-    # frozen into that prompt: who the gateway checked sent THIS turn.
+    # The turn that follows still finds the claim waiting and spends it,
+    # resolving to the claimer — that half of the feature is untouched. What
+    # is gone is the assertion: nothing today may say the gateway checked who
+    # sent this turn (VERIFIED_RUNGS is empty until a claim is bound to the
+    # exact submitted text, see DESIGN.md "Decision (2026-09-22)").
     added = module.on_pre_llm_call(session_id="durable-1", sender_id=OPENER)
-    assert added == {"context": SENDER_VERIFIED.format(login=SENDER)}
+    assert added is not None
+    assert "Sam" in added["context"] and "Otto" not in added["context"]
+    assert SENDER_VERIFIED.split("{")[0] not in added["context"]
     assert len(claims) == 0
 
 

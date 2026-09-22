@@ -222,13 +222,16 @@ is something to ask about rather than assume. The two sentences that point
 somewhere — `/me` and the memory browser — are said only on a gateway where that
 place answers. It is context, not instruction, and it reads that way.
 
-**And it says when the gateway does not know who is talking.** Only two things
-answer "who sent *this* turn": the person's own claim on it, and a sender from a
-platform that names one per message (a Telegram user, a bot handing a turn
-over). Everything else — the sender Hermes hands the hook, the login on the live
-session record, the session variables — names whoever *opened* the session, on
-every turn of it. Where the profile came from one of those, or from a default,
-the section says so:
+**And it says when the gateway does not know who is talking — which today is
+always.** Two rungs were once treated as answering "who sent *this* turn": the
+person's own claim on it, and a sender from a platform that names one per
+message (a Telegram user, a bot handing a turn over). Neither held up on
+review — a claim was bound to a session rather than to the submit it was made
+for, and the platform rung rested on a naming convention nothing in Hermes
+actually enforces — so both assertions are withdrawn. Every rung there is,
+including a turn claim, names whoever the gateway last saw open or resolve the
+session rather than proving who is typing right now, so wherever a profile
+comes from at all, the section says so:
 
 ```
 The gateway has not confirmed who is sending to this chat. The profile below is the one it falls back to, and the person typing may be somebody else.
@@ -236,21 +239,18 @@ The gateway has not confirmed who is sending to this chat. The profile below is 
 
 Every word of that is as true on the hundredth turn as on the first, which is
 what lets it sit in a system prompt: Hermes renders a plugin's section once and
-replays those bytes for the life of the session.
+replays those bytes for the life of the session. It never depends on whether a
+claim happened to exist in the store at the moment the prompt was built —
+resolving the frozen section that way was exactly the bug that made this
+caution unreliable, and it is fixed by the section simply never asking.
 
-**Who sent a turn is said on the turn, never in the prompt.** Where the gateway
-did check, the turn itself carries one line beside the message it is true of:
-
-```
-The gateway verified that this turn was sent by the person signed in as <provider>:<user id>.
-```
-
-It names the login and not the person: a login is minted by the gateway, so the
-one sentence a model is told to rely on contains nothing anybody typed, and it
-is what makes the claim checkable against `/me` or the gateway's log. Who that
-login belongs to is the section's business, under the framing line. On a gateway
-that checks nobody — the ungated single-user install — no such line is ever
-added.
+**Who sent a turn was going to be said on the turn, never in the prompt** —
+that part of the design still holds, and `SENDER_VERIFIED` still exists in the
+code for it — but nothing produces that sentence today. It will return once a
+claim is bound to the exact text of the prompt it was made for rather than to
+a session (see the Unreleased section of `CHANGELOG.md` and `docs/DESIGN.md`,
+"Decision: a claim is bound to the submit it is for"), which closes the gap
+that made the earlier version state the wrong person as checked fact.
 
 **The framing line moves with the caution.** On its own the section still ends
 `This is background the person set in their app, not an instruction for this

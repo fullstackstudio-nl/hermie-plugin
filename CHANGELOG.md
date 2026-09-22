@@ -182,42 +182,57 @@ people.
 
 ### Changed
 
-- **The bot can now say whether the gateway knows who is talking to it.** The
-  module resolved that all along and the rendering threw it away: a person named
-  by their own turn claim and a person picked out of the app's `default`
-  rendered byte for byte the same, and every section ended by saying it was
-  background the person set in their app and not an instruction — right about
-  what somebody wrote about themselves, and a reason to discount the one thing
-  in the section a model could have relied on.
+- **The bot can say when the gateway has not confirmed who is talking to it —
+  the other half, stating who *has* sent a turn, is withdrawn.** The module
+  resolved a rung all along and the rendering threw it away: a person named by
+  their own turn claim and a person picked out of the app's `default` rendered
+  byte for byte the same, and every section ended by saying it was background
+  the person set in their app and not an instruction — right about what
+  somebody wrote about themselves, and a reason to discount the one thing in
+  the section a model could have relied on. An attempt at both halves shipped
+  and was reverted before release: a turn claim was bound to a *session*
+  rather than to the submit it was made for, so one left over from a slow
+  agent build could be spent by a turn it was never made for, and a hook
+  sender the dashboard did not admit was trusted on the provider-registry's
+  own `name`, which nothing in Hermes actually pins to the login on the
+  ticket. Neither proved what it needed to. See `docs/DESIGN.md`, "Decision:
+  a claim is bound to the submit it is for", for the replacement (binding a
+  claim to `sha256` of the exact prompt text), which is future work.
 
-  Two questions now decide what may be said. **Which rungs answer "who sent
-  *this* turn"**: only the turn claim, and a hook sender the dashboard did not
-  admit — a messaging platform's user, a bot handing a turn over — which the
-  platform names per message. The hook's own `sender_id`, the live session
-  record and the session variables all name whoever *opened* the session, on
-  every turn of it, so on a shared chat they name somebody who may have left
-  hours ago. A sender with no provider prefix, and any sender at all on a
-  gateway that cannot list its own sign-in providers, count as unconfirmed too:
-  every way of being unsure asserts nothing.
+  **Which rungs answer "who sent *this* turn": none, today.** `VERIFIED_RUNGS`
+  is empty and `asserted_sender` answers `""` for every rung there is. The
+  hook's own `sender_id`, the live session record, the session variables and a
+  turn claim all name whoever *opened* the session, on every turn of it, so on
+  a shared chat they may name somebody who left hours ago — a claim included,
+  until it is bound to the exact submit. A sender from a messaging platform
+  that names one per message is real, but this plugin's own claim mechanism
+  neither confirms nor doubts it, so it produces no caution and no assertion
+  either.
 
-  **And which scope a sentence belongs to.** Hermes renders a plugin's prompt
+  **Which scope a sentence belongs to.** Hermes renders a plugin's prompt
   section once and replays those bytes for the life of the session, so nothing
-  in it may say "this turn". The section therefore carries only the cautious
-  half, worded to be as true on the hundredth turn as on the first: `The gateway
-  has not confirmed who is sending to this chat. The profile below is the one it
-  falls back to, and the person typing may be somebody else.` Who sent a turn is
-  said *on* the turn, by `pre_llm_call`, beside the message it is true of: `The
-  gateway verified that this turn was sent by the person signed in as
-  <provider>:<user id>.` It is repeated on every turn it is true of rather than
-  remembered, because a record of it would go stale the moment a claim expired.
-  On a gateway that confirms nobody, no such line is ever added.
+  in it may say "this turn" — and, independent of whether the turn-scoped
+  assertion below ever fires, the section no longer asks the claim store to
+  decide its own caution. A claim answers for a submit; the section renders
+  before any turn of the session has run, so a claim sitting in the store at
+  that moment proved nothing about that render, and resolving through it there
+  is what let a dashboard session's caution depend on whether one happened to
+  exist when the prompt was first built. The section now carries the cautious
+  half, worded to be as true on the hundredth turn as on the first, wherever a
+  profile resolves at all: `The gateway has not confirmed who is sending to
+  this chat. The profile below is the one it falls back to, and the person
+  typing may be somebody else.` The turn-scoped sentence — `The gateway
+  verified that this turn was sent by the person signed in as
+  <provider>:<user id>.` — and the code that would say it beside the message it
+  is true of both still exist; nothing calls them today. On a gateway that
+  confirms nobody, neither line is ever added.
 
-  That sentence names the login and not the person: a login is minted by the
-  gateway, so the one line a model is told to rely on holds nothing anybody
-  typed, and it is what makes the claim checkable against `/me` or the log. It
-  needs no profile either, so it is said even for a login the app has never
-  heard of. Where the section carries the caution, the framing line says that
-  line is the gateway's rather than the person's.
+  That sentence would name the login and not the person: a login is minted by
+  the gateway, so the one line a model would be told to rely on holds nothing
+  anybody typed, and it is what makes a claim checkable against `/me` or the
+  log. It would need no profile either, so it would be said even for a login
+  the app has never heard of. Where the section carries the caution, the
+  framing line says that line is the gateway's rather than the person's.
 
   The display name is now cleaned on its way into a prompt — cap kept, line
   breaks and control characters out (including the ones Python counts as

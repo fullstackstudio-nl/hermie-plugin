@@ -86,15 +86,21 @@ the whole of its safety:
   practice — and leaves a messaging platform's user id or a bot's name exactly
   as Hermes gave it.
 
-A spent claim is also the one thing that makes the gateway state, in the turn
-itself, that it *verified* who sent it — so what the route hands out is not only
-a profile but an assertion, and it is gated accordingly.
+A spent claim was meant to be the one thing that makes the gateway state, in
+the turn itself, that it *verified* who sent it. That assertion is currently
+**withdrawn**: it was bound to a session rather than to the submit it was made
+for, so a claim left over from a slow agent build could be spent by a turn it
+was never made for, and review caught it before release. A spent claim still
+selects whose profile the turn carries — that half of this route is unaffected
+— but nothing today states that the gateway checked anybody. See the
+Unreleased section of `CHANGELOG.md` for what has to be true before the
+assertion returns.
 
 So the worst a signed-in caller can do here is aim their own claim at a session
 the dashboard admitted them for, which is a turn they could type into anyway.
 What is left is the last-claim-wins race, and it is bounded by the same check: a
 claim on a runtime session can only ever have been made by the person that
-session was admitted for, so the worst it can assert is that person.
+session was admitted for, so the worst it can select is that person's profile.
 
 ## The memory routes and the display-name write
 

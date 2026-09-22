@@ -140,7 +140,23 @@ def test_a_rung_this_build_cannot_place_says_nothing(rung):
 
 def test_the_two_lists_do_not_overlap():
     assert not set(VERIFIED_RUNGS) & set(UNCONFIRMED_RUNGS)
-    assert set(VERIFIED_RUNGS) | set(UNCONFIRMED_RUNGS) | {BY_NOBODY} == set(EVERY_RUNG)
+    # `BY_PLATFORM` is the one rung the split leaves out on purpose (D2 of the
+    # plan): a messaging platform names its own sender per message, which is
+    # Hermes' business and neither confirmed nor doubted by this plugin's own
+    # claim mechanism, so it produces no caution and no assertion.
+    assert set(VERIFIED_RUNGS) | set(UNCONFIRMED_RUNGS) | {BY_NOBODY, BY_PLATFORM} == set(EVERY_RUNG)
+
+
+def test_by_platform_is_neither_verified_nor_cautioned():
+    """A hook sender the dashboard did not admit is real (DESIGN.md) but this
+    plugin's own claim mechanism has nothing to say about it either way, so it
+    must produce neither `SENDER_VERIFIED` nor `PROFILE_UNCONFIRMED`."""
+    text = render(person(), source=BY_PLATFORM)
+
+    assert BY_PLATFORM not in VERIFIED_RUNGS
+    assert BY_PLATFORM not in UNCONFIRMED_RUNGS
+    assert not asserts_the_sender(text)
+    assert not cautions(text)
 
 
 def test_the_rungs_that_name_the_opener_are_not_verified():
@@ -450,17 +466,55 @@ def test_a_gateway_that_cannot_list_its_own_providers_verifies_nobody():
 # -- rung 2: the claim, and where its sentence may go -------------------------
 
 
-def test_a_claimed_turn_says_so_on_the_turn_and_not_in_the_prompt():
+def test_a_claimed_turn_is_resolved_for_the_claimer_without_asserting_anything():
+    """A claim still changes whose profile a turn carries — that half of the
+    feature is untouched — but nothing today may say the gateway checked it
+    (`VERIFIED_RUNGS` is empty; see "Decision (2026-09-22)" in DESIGN.md).
+    """
     claims = TurnClaims()
-    module = module_for(one_person(), FakeSessionContext(**{UI_SESSION_ID: SID}), claims)
+    module = module_for(two_people(), FakeSessionContext(**{UI_SESSION_ID: SID, USER_ID: OPENER}), claims)
+    frozen = freeze(module)
     claims.claim(SID, LOGIN)
 
-    frozen = freeze(module)
     added = module.on_pre_llm_call(session_id="durable-1", sender_id="")
 
-    assert not asserts_the_sender(frozen), "a fact about one turn was frozen into the prompt"
-    assert added is not None and asserts_the_sender(added["context"])
-    assert LOGIN in added["context"]
+    assert cautions(frozen) and "Bo" in frozen
+    assert not asserts_the_sender(frozen)
+    assert added is not None
+    assert "Ana" in added["context"] and "Bo" not in added["context"]
+    assert cautions(added["context"]), "an unproven claim was rendered as if it were confirmed"
+    assert not asserts_the_sender(added["context"])
+
+
+def test_the_frozen_section_ignores_a_claim_that_exists_when_it_is_built():
+    """The reviewer's case: a claim sits in the store the moment the prompt is
+    first built, for a person other than the one the session names, and a
+    different person types later still. If the frozen section had consulted
+    the store it could have resolved the claimer with no caution at all,
+    settled before anybody had typed the turn the claim was even made for.
+
+    `render_section` no longer asks the store (`consult_claim=False`), so the
+    frozen bytes are the session's own opener, cautioned, exactly as if no
+    claim had ever been made — and stay that way for the life of the session,
+    whatever the per-turn path later resolves.
+    """
+    claims = TurnClaims()
+    module = module_for(
+        two_people(), FakeSessionContext(**{UI_SESSION_ID: SID, USER_ID: OPENER}), claims
+    )
+    claims.claim(SID, LOGIN)  # Ana's claim, sitting in the store before the prompt exists
+
+    frozen = freeze(module)
+
+    assert cautions(frozen), "the frozen section's caution depended on the claim store"
+    assert "Bo" in frozen and "Ana" not in frozen
+    assert not asserts_the_sender(frozen)
+
+    # A different person (Ana, by way of the claim) actually sends the next
+    # turn. That is the per-turn path's business; it changes nothing about the
+    # bytes core already persisted for the session and will go on replaying.
+    module.on_pre_llm_call(session_id="durable-1", sender_id="")
+    assert cautions(frozen) and "Bo" in frozen
 
 
 def test_the_frozen_section_does_not_outlive_the_turn_it_was_built_for():
@@ -484,19 +538,21 @@ def test_the_frozen_section_does_not_outlive_the_turn_it_was_built_for():
     assert later is None or not asserts_the_sender(later["context"])
 
 
-def test_the_assertion_is_said_again_on_the_next_turn_it_is_true_of():
-    """It is not remembered: a record of it would go stale the moment a claim did."""
+def test_a_repeated_claim_is_spent_each_time_and_never_asserted():
+    """The assertion, when it existed, rode every turn a claim named it true
+    of, fresh rather than remembered — a record of it would have gone stale
+    the moment a claim expired. Withdrawn, there is nothing left to repeat, but
+    the claim itself still gets spent turn after turn.
+    """
     claims = TurnClaims()
     module = module_for(one_person(), FakeSessionContext(**{UI_SESSION_ID: SID}), claims)
     freeze(module)
 
-    said = []
     for _ in range(3):
         claims.claim(SID, LOGIN)
         added = module.on_pre_llm_call(session_id="durable-1", sender_id="")
-        said.append(added is not None and asserts_the_sender(added["context"]))
-
-    assert said == [True, True, True]
+        assert added is None or not asserts_the_sender(added["context"])
+        assert len(claims) == 0, "the claim was left unspent"
 
 
 def test_a_turn_that_verifies_nobody_adds_nothing_at_all():
@@ -507,19 +563,32 @@ def test_a_turn_that_verifies_nobody_adds_nothing_at_all():
     assert module.on_pre_llm_call(session_id="durable-1", sender_id="") is None
 
 
-def test_a_verified_sender_the_app_has_no_row_for_is_still_asserted():
-    """The assertion is about the turn, not about whose profile is to hand."""
+def test_a_platform_sender_the_app_has_no_row_for_is_retracted_not_asserted():
+    """`BY_PLATFORM` names a real person Hermes trusts, but produces no
+    assertion (D2): the app has no profile for them, so the turn can only
+    retract the frozen one — never state that the gateway checked anybody.
+    """
     module = module_for(one_person(), FakeSessionContext())
     freeze(module)
 
     added = module.on_pre_llm_call(session_id="durable-1", sender_id="telegram:12345")
 
-    assert added is not None and asserts_the_sender(added["context"])
-    assert "telegram:12345" in added["context"]
+    assert added is not None and not asserts_the_sender(added["context"])
+    assert "nothing is shared about them" in added["context"]
+    assert "telegram:12345" not in added["context"]
 
 
-def test_the_assertion_sits_outside_the_copy_it_travels_with():
-    """A copy of the section ends with its framing line; this goes after it."""
+def test_beside_places_an_assertion_after_the_copy_when_there_is_one():
+    """`beside` still knows how to append an assertion after the copy's own
+    framing line; there is simply nothing to append until a claim is bound to
+    the exact submitted text (Task 2 of the plan)."""
+    copy = {"context": "line one\nline two"}
+
+    assert ContextModule.beside("EXTRA SENTENCE.", copy) == {"context": "line one\nline two\nEXTRA SENTENCE."}
+    assert ContextModule.beside("", copy) is copy
+
+
+def test_nothing_is_appended_after_a_claimed_turns_copy_today():
     claims = TurnClaims()
     module = module_for(two_people(), FakeSessionContext(**{UI_SESSION_ID: SID}), claims)
     freeze(module)
@@ -528,7 +597,8 @@ def test_the_assertion_sits_outside_the_copy_it_travels_with():
     added = module.on_pre_llm_call(session_id="durable-1", sender_id=OPENER)
 
     assert added is not None
-    assert asserts_the_sender(added["context"].split("\n")[-1])
+    assert added["context"].endswith(FRAMING_GATEWAY)
+    assert not asserts_the_sender(added["context"])
     assert "Ana" in added["context"] and "Bo" not in added["context"]
 
 

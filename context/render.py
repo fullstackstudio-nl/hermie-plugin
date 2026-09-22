@@ -69,15 +69,32 @@ SENDER_RUNGS = (BY_CLAIM, BY_HOOK, BY_PLATFORM, BY_LIVE_SESSION, BY_SESSION_VARS
 
 # And the split that decides what may be said about the person a rung named.
 #
-# **Only two rungs answer "who sent THIS turn".** A turn claim is made by the
-# person pressing send, from their own authenticated request, seconds before the
-# turn. A hook sender the DASHBOARD did not admit — a messaging platform's user
-# id, a bot handing a turn to another — is named per message by the platform it
-# came from, and `stand_in_test` already treats it as a sender Hermes got right.
+# **No rung is verified today.** Two rungs were once treated as answering "who
+# sent THIS turn" — a turn claim, and a hook sender the dashboard did not admit
+# — and both assertions were withdrawn on review. A claim was bound to a
+# *session*, so one left unspent by a slow agent build could still be sitting in
+# the store, unrelated to the submit that actually triggered a render; and
+# `BY_PLATFORM` rested on the registry-name convention (`Session.provider ==
+# registry.name`) that nothing in Hermes actually pins to the login on the
+# ticket. Neither proved what it was asked to prove. See DESIGN.md, "Decision
+# (2026-09-22): a claim is bound to the submit it is for", for the replacement
+# (a claim bound to `sha256` of the exact prompt text), which has not landed
+# yet — `VERIFIED_RUNGS` is empty until it does, and `asserted_sender` in
+# `__init__.py` answers `""` for every rung there is.
 #
-# Everything else names the person who OPENED the session, on every turn of it.
-# That is not a hedge, it is this repo's own finding (DESIGN.md, "A shared chat
-# names its opener on every turn"): the hook's `sender_id` is the agent's
+# `BY_CLAIM` sits in `UNCONFIRMED_RUNGS` alongside every rung that names the
+# opener, rather than in neither list, because until the claim is bound to the
+# submit it is exactly as unproven as they are — an authenticated request is
+# not nothing, but it is not what this repo's own reviews asked it to be
+# either, so it gets the same caution rather than a lighter one. `BY_PLATFORM`
+# is the one rung that sits in neither: a messaging platform names its own
+# sender per message, which is Hermes' business and something this plugin's
+# claim mechanism neither confirms nor doubts, so it produces no caution and no
+# assertion.
+#
+# Every other rung names the person who OPENED the session, on every turn of
+# it. That is not a hedge, it is this repo's own finding (DESIGN.md, "A shared
+# chat names its opener on every turn"): the hook's `sender_id` is the agent's
 # `_user_id`, set once from the record's `auth_user_id` when the agent is built;
 # the live record is the record that session was admitted on; the session
 # variables are bound at creation and never rebound. A Bot Chat is shared, so on
@@ -87,9 +104,11 @@ SENDER_RUNGS = (BY_CLAIM, BY_HOOK, BY_PLATFORM, BY_LIVE_SESSION, BY_SESSION_VARS
 #
 # The two lists are disjoint, `VERIFIED_RUNGS` is the closed one, and a rung
 # this module does not know about — the empty one a caller that has not been
-# told passes included — is in neither. Every direction fails towards silence.
-VERIFIED_RUNGS = (BY_CLAIM, BY_PLATFORM)
+# told passes included, and `BY_PLATFORM` beside it — is in neither. Every
+# direction fails towards silence.
+VERIFIED_RUNGS = ()
 UNCONFIRMED_RUNGS = (
+    BY_CLAIM,
     BY_HOOK,
     BY_LIVE_SESSION,
     BY_SESSION_VARS,

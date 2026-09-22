@@ -459,7 +459,12 @@ class ContextModule:
             )
 
     def sender_with_source(
-        self, named: str = "", session_id: str = "", *, take: bool = False
+        self,
+        named: str = "",
+        session_id: str = "",
+        *,
+        take: bool = False,
+        consult_claim: bool = True,
     ) -> Tuple[str, str]:
         """Who is asking, and which of the four rungs answered.
 
@@ -477,16 +482,25 @@ class ContextModule:
         and reading the record is a dict lookup in this very process rather than
         anything that touches a disk or a socket.
 
-        **A claim comes before all three**, including a hook sender spelled as
-        a dashboard login (`stand_in_test`), for the same
-        reason taken one step further: on a dashboard session the hook's sender
-        IS the session's creator (`_user_id` is set once from `auth_user_id`
-        when the agent is built), so on a shared chat it names the opener on
-        every turn. A claim is the only thing that names the person who pressed
-        send, because it was made by their own authenticated request moments
-        before this turn was submitted.
+        **A claim, where consulted, comes before all three**, including a hook
+        sender spelled as a dashboard login (`stand_in_test`): on a dashboard
+        session the hook's sender IS the session's creator (`_user_id` is set
+        once from `auth_user_id` when the agent is built), so on a shared chat
+        it names the opener on every turn, and a claim is made by an
+        authenticated request closer to the turn than any of that.
+
+        **`consult_claim` is `False` for exactly one caller: `render_section`.**
+        The store holds claims made for a *submit*, and a section is rendered
+        once, before any turn of the session has run — a claim sitting there the
+        moment this fires is not evidence about that render, only about some
+        submit that has or has not reached the hook yet. Reading it here would
+        make the frozen section's caution depend on a race it cannot see the
+        outcome of, which is exactly the bug this parameter exists to close (see
+        `render_section`). Every other caller leaves it at the default, because
+        the same reasoning does not apply on the per-turn path: it is the
+        `pre_llm_call` firing for that exact turn.
         """
-        claimed = self.claimed_sender(named, session_id, take=take)
+        claimed = self.claimed_sender(named, session_id, take=take) if consult_claim else ""
         if claimed:
             return claimed, BY_CLAIM
         if named:
@@ -598,6 +612,18 @@ class ContextModule:
         turn may well come from somebody else. The person it resolved is
         remembered along with the sender it resolved for, and the per-turn path
         takes over from there.
+
+        **It never asks the claim store.** A claim answers for one submit and is
+        meant to be spent by the `pre_llm_call` of the turn that submit starts;
+        this runs earlier than any turn of the session, so a claim sitting in
+        the store the moment it fires proves nothing about this particular
+        render — it may be left over from a submit that has not reached the
+        hook yet, or never will. Resolving through it here is what let a
+        dashboard session's caution depend on whether a claim happened to exist
+        when the prompt was first built, rather than on anything true of this
+        session. This stays on `BY_LIVE_SESSION` and `BY_SESSION_VARS` (or
+        nothing), so the caution is there every time a profile resolves at all,
+        independent of the store.
         """
         try:
             bot = str(session_info.get("profile_name") or "") or self.runtime.bot_name()
@@ -607,7 +633,8 @@ class ContextModule:
             stamp = self.runtime.app_stamp()
             section = self.section()
             sender_id, source = self.sender_with_source(
-                session_id=str(session_info.get("session_id") or "")
+                session_id=str(session_info.get("session_id") or ""),
+                consult_claim=False,
             )
             user, rung, _by_sender = attribution(
                 section,
@@ -715,13 +742,17 @@ class ContextModule:
 
     @staticmethod
     def asserted_sender(rung: str, sender_id: str) -> str:
-        """The one sentence that says who sent THIS turn, or "".
+        """The one sentence that says who sent THIS turn, or "" — today, always "".
 
-        Only on a rung that answers that question — a claim the person made
-        themselves, or a sender from a platform that names one per message.
+        `VERIFIED_RUNGS` (`render.py`) is empty: the two rungs once treated as
+        answering "who sent this turn" — a claim bound to a session rather than
+        to the submit it was made for, and a hook sender trusted on a
+        registry-name convention nothing in Hermes actually pins — did not prove
+        it, and both assertions are withdrawn until a claim is bound to
+        `sha256` of the exact prompt text (DESIGN.md, "Decision (2026-09-22)").
         Never on a rung that names the opener of the session, which is every
-        other one, and never from the section, which is frozen into a prompt
-        and replayed over turns this was not true of.
+        rung there is right now, and never from the section, which is frozen
+        into a prompt and replayed over turns this was not true of.
 
         It does not need the app's metadata and does not read it: whether the
         gateway checked the sender is settled before anybody asks whose profile
