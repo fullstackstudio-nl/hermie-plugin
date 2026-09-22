@@ -20,7 +20,14 @@ from hermie_plugin import contract
 from hermie_plugin.context import ContextModule
 from hermie_plugin.context import turn_claim
 from hermie_plugin.context.live_session import GATEWAY_MODULE, LiveSessions
-from hermie_plugin.context.render import BY_CLAIM, BY_HOOK, INTRODUCED, SUPERSEDES_BY_SENDER
+from hermie_plugin.context.render import (
+    BY_CLAIM,
+    BY_HOOK,
+    BY_PLATFORM,
+    INTRODUCED,
+    SENDER_VERIFIED,
+    SUPERSEDES_BY_SENDER,
+)
 from hermie_plugin.context.session_vars import (
     SESSION_ID,
     SESSION_KEY,
@@ -460,7 +467,11 @@ def test_building_the_prompt_reads_the_claim_without_spending_it():
     assert "Sam" in text and "Otto" not in text
     assert claims.peek(SID) == SENDER
 
-    assert module.on_pre_llm_call(session_id="durable-1", sender_id=OPENER) is None
+    # The profile needs no topping up — the prompt already carries the
+    # claimer's. What the turn still adds is the one sentence that may not be
+    # frozen into that prompt: who the gateway checked sent THIS turn.
+    added = module.on_pre_llm_call(session_id="durable-1", sender_id=OPENER)
+    assert added == {"context": SENDER_VERIFIED.format(login=SENDER)}
     assert len(claims) == 0
 
 
@@ -515,8 +526,20 @@ def test_the_session_variables_are_rewritten_for_the_claimer_not_the_opener():
     assert hermes.snapshot()[USER_NAME] == "Sam"
 
 
-@pytest.mark.parametrize("named", ["12345", "jurist", "telegram:12345"])
-def test_a_sender_the_dashboard_did_not_admit_is_not_overridden(named):
+@pytest.mark.parametrize(
+    "named,rung",
+    [
+        # No provider at all: this gateway cannot place it, so it is neither
+        # overridden by a claim nor reported as a sender it checked.
+        ("12345", BY_HOOK),
+        ("jurist", BY_HOOK),
+        # A provider the dashboard does not sign people in with. The platform
+        # named this sender for this message, so it is the one hook sender
+        # worth reporting as verified.
+        ("telegram:12345", BY_PLATFORM),
+    ],
+)
+def test_a_sender_the_dashboard_did_not_admit_is_not_overridden(named, rung):
     """A platform user or a bot handing a turn over was named correctly by Hermes."""
     claims = TurnClaims(clock=Clock())
     hermes = FakeSessionContext(**{UI_SESSION_ID: SID, USER_ID: OPENER})
@@ -524,7 +547,7 @@ def test_a_sender_the_dashboard_did_not_admit_is_not_overridden(named):
 
     claims.claim(SID, SENDER)
 
-    assert module.sender_with_source(named, "durable-1", take=True) == (named, BY_HOOK)
+    assert module.sender_with_source(named, "durable-1", take=True) == (named, rung)
     assert claims.peek(SID) == SENDER, "a claim that did not apply was spent"
 
 
@@ -616,8 +639,15 @@ def live(monkeypatch):
     """The dashboard's session table, with one live runtime session in it."""
     server = types.ModuleType(GATEWAY_MODULE)
     server._sessions = {
-        SID: {"session_key": "key-1", "agent": types.SimpleNamespace(session_id="durable-1")}
+        SID: {
+            "session_key": "key-1",
+            "agent": types.SimpleNamespace(session_id="durable-1"),
+            # The login the dashboard stamped on the record when it admitted
+            # the WebSocket. The route checks a claimer against this.
+            "auth_user_id": SENDER,
+        }
     }
+    server._session_auth_user_id = lambda record: str(record.get("auth_user_id") or "")
     monkeypatch.setitem(sys.modules, GATEWAY_MODULE, server)
     return server
 
@@ -692,6 +722,46 @@ def test_a_request_that_names_no_person_is_refused(routes, store):
 
     assert response.status_code == 403
     assert len(store) == 0
+
+
+def test_a_signed_in_stranger_cannot_claim_somebody_elses_session(routes, store):
+    """Being signed in is not being signed in to THAT session.
+
+    Hermes hands every authenticated dashboard caller every route with nothing
+    for a route to check an owner against, so a runtime session id learned by
+    any means would otherwise be enough to claim that session's next turn — and
+    what a claim buys is a sentence telling the model the gateway VERIFIED who
+    sent that turn.
+    """
+    response = app_signed_in_as(routes, person(user_id="opener-sub")).post(
+        PATH, json={"session_id": SID}
+    )
+
+    assert response.status_code == 403, response.text
+    assert len(store) == 0
+
+
+def test_a_session_admitted_under_nobody_authorises_nobody(routes, store, live):
+    """Nothing to check the caller against is not the same as anybody will do."""
+    live._sessions[SID]["auth_user_id"] = ""
+
+    assert app_signed_in_as(routes, person()).post(PATH, json={"session_id": SID}).status_code == 403
+    assert len(store) == 0
+
+
+def test_a_gateway_that_does_not_stamp_the_login_authorises_nobody(routes, store, live):
+    del live._session_auth_user_id
+
+    assert app_signed_in_as(routes, person()).post(PATH, json={"session_id": SID}).status_code == 403
+    assert len(store) == 0
+
+
+def test_the_claimer_is_matched_across_the_provider_prefix(routes, store, live):
+    """The one comparison this repo has, so the two spellings of an id agree."""
+    live._sessions[SID]["auth_user_id"] = "sender-sub"
+
+    assert app_signed_in_as(routes, person()).post(PATH, json={"session_id": SID}).status_code == 204
+    assert store.peek(SID) == SENDER
 
 
 def test_the_route_records_the_durable_ids_beside_the_runtime_one(routes, store):

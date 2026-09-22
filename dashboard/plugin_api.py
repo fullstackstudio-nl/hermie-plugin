@@ -328,7 +328,11 @@ def _turn_claim():
     _package()
     from hermie_plugin.context import live_session, turn_claim
 
-    return turn_claim, live_session
+    # By name and not as `context.render`: the package re-exports the `render`
+    # FUNCTION under that name, so the attribute shadows the submodule.
+    from hermie_plugin.context.render import same_user
+
+    return turn_claim, live_session, same_user
 
 
 @router.post("/context/turn", status_code=204)
@@ -342,8 +346,18 @@ async def context_turn(request: Request):
     ids kept beside it as aliases. The identity is the verified dashboard
     login, spelled the way the gateway spells `auth_user_id`. No disk, no
     outbound call and no lock anybody else waits on, so it runs on the loop.
+
+    **And the caller must be the person that session was admitted for.** Being
+    signed in is not enough. Hermes hands every authenticated dashboard caller
+    every route with nothing to check an owner against, so without this a
+    signed-in user who learned somebody else's runtime session id could claim
+    that session's next turn — and what a claim now buys is a sentence telling
+    the model the gateway VERIFIED who sent it. So the login on the record is
+    compared with the login on the request, across the provider prefix, and a
+    record admitted under nobody authorises nobody: there is nothing to check
+    against, and a claim that cannot be checked is refused rather than trusted.
     """
-    turn_claim, live_session = _turn_claim()
+    turn_claim, live_session, same_user = _turn_claim()
     content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
     if content_type != "application/json":
         raise HTTPException(status_code=415, detail="the body must be sent as application/json")
@@ -368,6 +382,15 @@ async def context_turn(request: Request):
     record = sessions.runtime_record(session_id)
     if record is None:
         raise HTTPException(status_code=404, detail="no live session with that runtime id")
+    admitted = sessions.admitted_as(record)
+    if not admitted or not same_user(admitted, identity):
+        # Deliberately the same 403 either way. "That session was admitted for
+        # somebody else" and "that session is not yours to claim" are the same
+        # refusal, and telling the two apart would let a caller sweep runtime
+        # ids to find out which ones exist and whose they are.
+        raise HTTPException(
+            status_code=403, detail="that session was not admitted for the person asking"
+        )
     turn_claim.shared().claim(session_id, identity, sessions.durable_ids(record))
     return Response(status_code=204)
 

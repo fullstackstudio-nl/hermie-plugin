@@ -127,6 +127,27 @@ class LiveSessions:
             logger.warning("hermie: could not read the live session table: %s", exc)
             return None
 
+    def admitted_as(self, record: Optional[Mapping[str, Any]]) -> str:
+        """The login THIS record was admitted under, or "".
+
+        `login` above asks the same question of a session id; this asks it of a
+        record already in hand, which is what the turn-claim route has after it
+        has checked that the id is live. The route needs both answers about one
+        record and must not race a second lookup between them.
+
+        An empty answer is a gateway that does not stamp the login, or a record
+        admitted without one. It is never an authorisation: see the route.
+        """
+        server = self.server()
+        read = getattr(server, "_session_auth_user_id", None) if server is not None else None
+        if not callable(read) or not isinstance(record, Mapping):
+            return ""
+        try:
+            return str(read(record) or "")
+        except Exception as exc:
+            logger.warning("hermie: could not read the live session's login: %s", exc)
+            return ""
+
     @staticmethod
     def durable_ids(record: Optional[Mapping[str, Any]]) -> Tuple[str, ...]:
         """The durable key and agent session id carried by a live record."""

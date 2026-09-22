@@ -182,61 +182,80 @@ people.
 
 ### Changed
 
-- **The context section now says whether the gateway knows who is talking to
-  the bot.** It resolved that all along and threw it away: a person named by
-  their own turn claim and a person picked out of the app's `default` rendered
-  byte for byte the same, and every section ended by saying it was background
-  the person set in their app and not an instruction — right about what somebody
-  wrote about themselves, and a reason to discount the one thing in the section
-  a model could have relied on. So a bot could not answer "who am I talking
-  to?" however well the gateway knew.
+- **The bot can now say whether the gateway knows who is talking to it.** The
+  module resolved that all along and the rendering threw it away: a person named
+  by their own turn claim and a person picked out of the app's `default`
+  rendered byte for byte the same, and every section ended by saying it was
+  background the person set in their app and not an instruction — right about
+  what somebody wrote about themselves, and a reason to discount the one thing
+  in the section a model could have relied on.
 
-  The rung is carried into the rendering and splits in two. On a **verified**
-  rung — the turn claim, the sender Hermes hands the hook, the login on the
-  gateway's live session record — the section states it as fact, in its own
-  sentence, before the background: `The gateway verified that this turn was sent
-  by "<name>", signed in as <provider>:<user id>.` It takes the place of the
-  plain `You are talking to …` line rather than repeating it, and the framing
-  line stops contradicting it: `Who sent this turn is the gateway's own
-  statement and can be relied on. The rest is background…`. On every other
-  rung — the configured default, the app's own, the only registered person, and
-  the session variables, which name whoever *opened* a shared chat rather than
-  whoever is typing — it says the opposite as plainly: `The gateway could not
-  confirm who sent this turn. What follows is the default profile it falls back
-  to, not a person it identified.` The verified sentence never renders on a rung
-  that verified nobody; a rung this build cannot place renders neither, which is
-  also what every caller written before this gets.
+  Two questions now decide what may be said. **Which rungs answer "who sent
+  *this* turn"**: only the turn claim, and a hook sender the dashboard did not
+  admit — a messaging platform's user, a bot handing a turn over — which the
+  platform names per message. The hook's own `sender_id`, the live session
+  record and the session variables all name whoever *opened* the session, on
+  every turn of it, so on a shared chat they name somebody who may have left
+  hours ago. A sender with no provider prefix, and any sender at all on a
+  gateway that cannot list its own sign-in providers, count as unconfirmed too:
+  every way of being unsure asserts nothing.
 
-  The display name is now quoted inside a sentence the framing no longer covers,
-  so it is cleaned as the untrusted input it is: the 80-character cap stays,
-  line breaks and control characters come out (including the ones Python counts
-  as whitespace and a terminal does not, and the bidi overrides that reorder
-  what is drawn), markup that could open a heading, a fence, a quote or a link
-  is removed, and what is left is quoted — wherever the name is rendered, not
-  only in the assertion — so a sentence buried in a name reads as part of the
-  name and cannot imitate a sentence of the section's own. The login is cleaned
-  the same way. `You are talking to Ana.` is therefore now `You are talking to
-  "Ana".`
+  **And which scope a sentence belongs to.** Hermes renders a plugin's prompt
+  section once and replays those bytes for the life of the session, so nothing
+  in it may say "this turn". The section therefore carries only the cautious
+  half, worded to be as true on the hundredth turn as on the first: `The gateway
+  has not confirmed who is sending to this chat. The profile below is the one it
+  falls back to, and the person typing may be somebody else.` Who sent a turn is
+  said *on* the turn, by `pre_llm_call`, beside the message it is true of: `The
+  gateway verified that this turn was sent by the person signed in as
+  <provider>:<user id>.` It is repeated on every turn it is true of rather than
+  remembered, because a record of it would go stale the moment a claim expired.
+  On a gateway that confirms nobody, no such line is ever added.
 
-  What the gateway checked is a fact about a *turn*, so it is kept out of the
-  per-session record: the copy a chat is remembered by carries no such sentence,
-  and the copy it is sent does. Otherwise a chat whose turns are sometimes
-  claimed and sometimes not would pay an injection each way round, each of them
-  announcing that the person had changed their profile. The cost is that a
-  section frozen as unconfirmed is not corrected on its own account — it is
-  asserted from the start wherever the prompt was built with a sender in reach,
-  which is every dashboard session, and otherwise waits for the next copy the
-  chat is sent.
+  That sentence names the login and not the person: a login is minted by the
+  gateway, so the one line a model is told to rely on holds nothing anybody
+  typed, and it is what makes the claim checkable against `/me` or the log. It
+  needs no profile either, so it is said even for a login the app has never
+  heard of. Where the section carries the caution, the framing line says that
+  line is the gateway's rather than the person's.
+
+  The display name is now cleaned on its way into a prompt — cap kept, line
+  breaks and control characters out (including the ones Python counts as
+  whitespace and a terminal does not, and the bidi overrides that reorder what
+  is drawn), markup that could open a heading, a fence, a quote or a link
+  removed, and what is left quoted, so a sentence buried in a name reads as part
+  of the name and cannot imitate a sentence of the section's own. `You are
+  talking to Ana.` is therefore now `You are talking to "Ana".` It is cleaned
+  only there: `/me` and the `HERMES_SESSION_USER_NAME` shim still get the name
+  as written, because `Max_B` and `Anne-Marie <Annie>` are names.
+
+  How a person was resolved is kept out of the per-session record, which answers
+  "has this chat been told this about this person?". It swings between turns —
+  one is claimed, the next is not — and comparing it would read every swing as
+  an edit and announce it in a note beginning "The person has changed this".
+
+- **`POST /api/plugins/hermie/context/turn` now checks that the session is
+  yours.** It checked that the runtime id was live and that the caller was
+  signed in as somebody, and nothing tied the two together — so any signed-in
+  user who learned another user's runtime session id could claim that session's
+  next turn, re-claiming inside the 30-second window. The login on the request
+  must now be the login the dashboard admitted that record under, compared
+  across the provider prefix. A session admitted under nobody, and a gateway
+  that does not stamp the login on its records, authorise nobody. All three are
+  the same 403, so the route cannot be swept to learn which runtime ids exist or
+  whose they are.
 
 - **What became of a turn claim is now in the log**, which nothing said before,
   so a gateway where the feature had quietly stopped working looked exactly like
   one where nobody had claimed anything. Every line begins `hermie: turn claim`:
   `spent`, `refused` (with why it may not stand in for the turn) and `discarded`
   at `info`, `absent` at `debug`, because a turn with no claim is every turn on
-  every gateway whose app does not claim. A line carries the session the turn
-  runs on and the provider half of a login (`oidc`, `basic`) — never the user
-  half, never a name, and nothing from the message. The store's shape number is
-  unchanged, so both copies of the plugin go on sharing one store.
+  every gateway whose app does not claim. A line carries the provider half of a
+  login (`oidc`, `basic`) and a short digest of the runtime session id — never
+  the id itself, which is what somebody would need to aim a claim, never the
+  user half of a login, never a name, and nothing from the message. The store's
+  shape number is unchanged, so both copies of the plugin go on sharing one
+  store.
 
 - The docs now carry the exact shape of Hermes' own `PATCH /api/profiles/{name}`
   (DESIGN.md §8), which is how a display name is set. The plugin does not

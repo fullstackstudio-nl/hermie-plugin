@@ -29,6 +29,7 @@ from .render import (
     BY_LIVE_SESSION,
     BY_NOBODY,
     BY_ONLY_USER,
+    BY_PLATFORM,
     BY_SESSION_VARS,
     ContextSection,
     UserContext,
@@ -47,7 +48,8 @@ ABOUT_CHARS = 240
 # One sentence per rung of the resolution order.
 RUNGS = {
     BY_CLAIM: "the person who claimed this turn from the app, signed in to the dashboard",
-    BY_HOOK: "the sender Hermes handed the hook",
+    BY_HOOK: "the sender Hermes handed the hook, which on a shared chat is whoever opened it",
+    BY_PLATFORM: "the sender Hermes handed the hook, from a platform that names one per message",
     BY_LIVE_SESSION: "the login the gateway admitted this session under",
     BY_SESSION_VARS: "the login bound into this session's variables",
     BY_CONFIGURED: "the configured default (context.default_user)",
@@ -55,6 +57,11 @@ RUNGS = {
     BY_ONLY_USER: "the only person registered on this gateway",
     BY_NOBODY: "nobody",
 }
+
+# And when a rung was not established at all. `attribution` answers `""` for a
+# caller that resolved a sender without saying where it came from, and a report
+# that invented a rung for that would be the one thing this command is for.
+UNSAID = "somewhere this build cannot name"
 
 # What to do about an answer of "nobody". It is one line because it is one
 # action, and the person reading this is standing in front of the app.
@@ -89,7 +96,7 @@ def _person(
     section: ContextSection, user: UserContext, rung: str, sender_id: str, bot: str, by_sender: bool
 ) -> List[str]:
     lines = [_line("Talking to", user.display_name or "(no display name set)")]
-    lines.append(_line("Worked out", f"from {RUNGS.get(rung, rung)}"))
+    lines.append(_line("Worked out", f"from {RUNGS.get(rung) or UNSAID}"))
 
     if sender_id and by_sender:
         if sender_id == user.user_id:
@@ -146,8 +153,8 @@ def answer(module: Any, raw_args: str = "") -> Optional[str]:
         section = module.section()
         sender_id, source = module.sender_with_source()
         # One definition of "which rung named this person", shared with the
-        # section that asserts or disclaims on it: a report that disagreed with
-        # the prompt about that would be worse than no report.
+        # section that cautions on it and the turn that asserts on it: a report
+        # that disagreed with the prompt about that would be worse than none.
         user, rung, by_sender = attribution(
             section,
             sender_id=sender_id,

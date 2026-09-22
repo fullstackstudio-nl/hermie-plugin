@@ -71,6 +71,13 @@ the whole of its safety:
   session key, a durable id, or an id for a session that has since moved on —
   so it cannot touch another platform's conversation, a messaging turn or a
   cron run, at all.
+- **It can only reach the caller's own session.** The login on the request must
+  be the one the dashboard admitted that record under. Being signed in is not
+  enough: without this, a runtime session id learned by any means would let one
+  signed-in person claim another's next turn. A record admitted under nobody,
+  and a gateway that does not stamp the login on its records, authorise nobody.
+  A mismatch, an unstamped record and an unknown owner are the same 403, so the
+  route cannot be swept to learn which ids exist or whose they are.
 - **It is spent by one model turn and expires in 30 seconds.** Two claims on
   one session inside that window leave the later one standing, and an unspent
   claim is simply dropped, never acted on later.
@@ -79,10 +86,15 @@ the whole of its safety:
   practice — and leaves a messaging platform's user id or a bot's name exactly
   as Hermes gave it.
 
-So the worst a signed-in caller can do here is put their own context section in
-front of somebody else's turn on a dashboard chat both of them can already
-reach, for up to 30 seconds. That is the same trust every signed-in caller
-already has over every route on this list, not a new one.
+A spent claim is also the one thing that makes the gateway state, in the turn
+itself, that it *verified* who sent it — so what the route hands out is not only
+a profile but an assertion, and it is gated accordingly.
+
+So the worst a signed-in caller can do here is aim their own claim at a session
+the dashboard admitted them for, which is a turn they could type into anyway.
+What is left is the last-claim-wins race, and it is bounded by the same check: a
+claim on a runtime session can only ever have been made by the person that
+session was admitted for, so the worst it can assert is that person.
 
 ## The memory routes and the display-name write
 

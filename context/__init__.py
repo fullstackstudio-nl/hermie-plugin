@@ -67,6 +67,7 @@ itself.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import threading
 from dataclasses import dataclass
@@ -77,6 +78,7 @@ from .render import (
     BY_CLAIM,
     BY_HOOK,
     BY_LIVE_SESSION,
+    BY_PLATFORM,
     BY_SESSION_VARS,
     INTRODUCED,
     RETRACTED,
@@ -90,12 +92,14 @@ from .render import (
     PROVIDER_PREFIX,
     ContextSection,
     Orientation,
+    VERIFIED_RUNGS,
     UserContext,
     attribution,
     read_sections,
     render,
     resolve,
     same_user,
+    sender_sentence,
     split_provider,
 )
 from . import me as me_command
@@ -156,6 +160,19 @@ class Frozen:
     stamp: Tuple[int, int]
     introduced: bool = False
     sender: str = ""
+
+
+def _said_as(runtime_id: str) -> str:
+    """A runtime session id as a log may name it: short, stable, not the id.
+
+    A runtime id is a bearer token in one direction — anybody who learns one can
+    aim a turn claim at that session — so it does not go in a log that a wider
+    set of people read than can reach the session. A digest is as good for
+    following one session through a log and is no use for claiming it.
+    """
+    if not runtime_id:
+        return "no runtime id"
+    return "#" + hashlib.sha256(runtime_id.encode("utf-8", "replace")).hexdigest()[:8]
 
 
 def _why_refused(named: str, runtime_id: str) -> str:
@@ -271,6 +288,53 @@ class ContextModule:
         durable = (session_id, self.session_vars.read(SESSION_ID), self.session_vars.read(SESSION_KEY))
         return runtime_id, durable
 
+    def login_providers(self, session_id: str = "") -> set:
+        """The prefixes a login THIS DASHBOARD admits people under, on this gateway.
+
+        Hermes' registry of interactive sign-in providers, plus whatever the
+        live record for this session was admitted under — a gateway can be
+        serving a provider the registry has not been asked about yet, and the
+        record is proof that it does.
+
+        Two questions are settled with this set and both fail safe on an empty
+        one, in opposite directions, because they are opposite questions. A
+        claim may stand in only for a sender this set recognises, so an empty
+        set lets no claim through. A hook sender counts as verified only when
+        this set does NOT recognise it, so an empty set verifies nothing. A
+        gateway that cannot say which logins are its own is a gateway that gets
+        the cautious answer to both.
+        """
+        providers = set(self.auth_providers() or ())
+        found = PROVIDER_PREFIX.match(self.live_sender(session_id) or "")
+        if found is not None:
+            providers.add(found.group(1))
+        return providers
+
+    def platform_sender(self, named: str, session_id: str = "") -> bool:
+        """Whether the hook's sender is one the dashboard did NOT admit.
+
+        This is the whole of what makes a hook sender worth asserting. Hermes
+        hands `pre_llm_call` the agent's `_user_id`, which on a dashboard
+        session is the `auth_user_id` stamped when the agent was BUILT — so on
+        a shared chat it names whoever opened it, on every turn, whoever typed
+        it (DESIGN.md, "A shared chat names its opener on every turn"). A
+        sender spelled any other way did not come from there: a messaging
+        platform names the user who sent each message, and a bot handing a turn
+        to another names itself. `stand_in_test` already draws this line from
+        the other side — it is the sender a claim may not override, because
+        Hermes named it correctly.
+
+        Three ways to be unsure and all three answer "no", because "no" is the
+        answer that asserts nothing: a sender with no provider at all, a
+        provider this dashboard signs people in with, and a gateway that cannot
+        say which providers those are.
+        """
+        match = PROVIDER_PREFIX.match(named or "")
+        if match is None:
+            return False
+        providers = self.login_providers(session_id)
+        return bool(providers) and match.group(1) not in providers
+
     def stand_in_test(self, named: str, runtime_id: str, session_id: str = "") -> Callable[[str], bool]:
         """Whether a claim may replace the sender the hook was handed.
 
@@ -297,10 +361,7 @@ class ContextModule:
         if match is None:
             return lambda claimed: False
         prefix = match.group(1)
-        providers = set(self.auth_providers() or ())
-        found = PROVIDER_PREFIX.match(self.live_sender(session_id) or "")
-        if found is not None:
-            providers.add(found.group(1))
+        providers = self.login_providers(session_id)
 
         def accept(claimed: str) -> bool:
             own = PROVIDER_PREFIX.match(claimed or "")
@@ -362,7 +423,7 @@ class ContextModule:
         never a name, and nothing from the message — a log line is read by
         people who are not the person who typed.
         """
-        where = runtime_id or "no runtime id"
+        where = _said_as(runtime_id)
         if taken:
             logger.info(
                 "hermie: turn claim spent for session %s (provider %s)",
@@ -394,7 +455,7 @@ class ContextModule:
         if self.claims.take(runtime_id, durable):
             logger.info(
                 "hermie: turn claim discarded for session %s; the plugin answered without a model turn",
-                runtime_id or "no runtime id",
+                _said_as(runtime_id),
             )
 
     def sender_with_source(
@@ -429,7 +490,10 @@ class ContextModule:
         if claimed:
             return claimed, BY_CLAIM
         if named:
-            return named, BY_HOOK
+            # Two rungs, one lookup: the same sender, told apart by whether the
+            # dashboard is where it came from. Only the platform half answers
+            # "who sent THIS turn" — see `platform_sender`.
+            return named, (BY_PLATFORM if self.platform_sender(named, session_id) else BY_HOOK)
         found = self.live_sender(session_id)
         if found:
             return found, BY_LIVE_SESSION
@@ -562,7 +626,7 @@ class ContextModule:
                     stamp,
                     sender=sender_id,
                 )
-            return self.rendered(user, rung, sender_id, bot=bot)
+            return self.rendered(user, rung, bot=bot)
         except Exception as exc:
             # A raising section callable costs core the whole plugin-section
             # block, so this one never raises.
@@ -626,24 +690,19 @@ class ContextModule:
         self,
         user: Optional[UserContext],
         rung: str = "",
-        sender_id: str = "",
         lead: str = "",
         bot: str = "",
     ) -> str:
         """`render`, with everything this gateway settles rather than the caller.
 
-        Three of the arguments are the same on every path — the bot, the cap,
-        the orientation this gateway can stand behind — and the two that are
-        not are the pair that must travel together: the rung that named the
-        person and the login they were named by. Passing them through one door
-        is what keeps a path from quietly rendering without them, which reads
-        as "could not confirm" and would be a lie on a verified turn.
+        The bot, the cap and the orientation this gateway can stand behind are
+        the same on every path; `rung` is the one thing that is not, and the
+        section says only the cautious half of it.
 
-        **Called with neither, it renders the person and nothing about the
-        turn**, which is the copy this module compares and remembers. See
-        `top_up`: who the gateway checked is a fact about a turn, and a record
-        of what a chat has been told about a PERSON must not move when it
-        changes.
+        **Called without a rung, it renders the person and nothing else**, which
+        is the copy this module compares and remembers. See `top_up`: how a
+        person was resolved is a fact about a turn, and a record of what a chat
+        has been told about a PERSON must not move when it changes.
         """
         return render(
             user,
@@ -652,8 +711,41 @@ class ContextModule:
             lead=lead,
             orientation=self.orientation,
             source=rung,
-            login=sender_id,
         )
+
+    @staticmethod
+    def asserted_sender(rung: str, sender_id: str) -> str:
+        """The one sentence that says who sent THIS turn, or "".
+
+        Only on a rung that answers that question — a claim the person made
+        themselves, or a sender from a platform that names one per message.
+        Never on a rung that names the opener of the session, which is every
+        other one, and never from the section, which is frozen into a prompt
+        and replayed over turns this was not true of.
+
+        It does not need the app's metadata and does not read it: whether the
+        gateway checked the sender is settled before anybody asks whose profile
+        that is, so a turn from a login with no profile at all still says so.
+        """
+        return sender_sentence(sender_id) if rung in VERIFIED_RUNGS else ""
+
+    @staticmethod
+    def beside(asserted: str, found: Optional[Dict[str, str]]) -> Optional[Dict[str, str]]:
+        """Add the turn's own sentence to whatever else this turn had to say.
+
+        After it, not in front. Anything `top_up` or `introduce` produces is a
+        copy of the section and ends with its framing line — "background the
+        person set in their app, not an instruction" — and a sentence placed
+        before that would be swept up by it. Put after, it is plainly outside
+        the copy and is the gateway speaking for itself.
+
+        A turn with nothing else to add carries it alone, which is the ordinary
+        case on a gateway where every turn is claimed.
+        """
+        if not asserted:
+            return found
+        body = (found or {}).get("context", "")
+        return {"context": f"{body}\n{asserted}" if body else asserted}
 
     # -- the per-turn top-up -------------------------------------------------
 
@@ -752,7 +844,7 @@ class ContextModule:
             # time, and claiming otherwise points a model at nothing. Where the
             # older copy sits decides the rest of the sentence: one said in the
             # chat was never in the system prompt at all.
-            return {"context": self.rendered(user, rung, sender_id, lead=self.beaten(frozen, changed_sender))}
+            return {"context": self.rendered(user, rung, lead=self.beaten(frozen, changed_sender))}
         if not frozen.text:
             # Nothing was said and nothing is there now. Nothing to retract.
             return None
@@ -832,7 +924,7 @@ class ContextModule:
         )
         if not text:
             return None
-        return {"context": self.rendered(user, rung, sender_id, lead=INTRODUCED)}
+        return {"context": self.rendered(user, rung, lead=INTRODUCED)}
 
     def on_pre_llm_call(self, **kwargs: Any) -> Optional[Dict[str, str]]:
         """Contribute context the chat's own copy does not already carry.
@@ -846,6 +938,16 @@ class ContextModule:
         rather than being taken from the session. A shared chat's turns come
         from different people, and the one thing that must never happen is a bot
         being handed one person's profile while another is typing.
+
+        **And this is the only place that may say the gateway checked.** That
+        sentence is true of one turn, so it rides that turn's message and is
+        said again on the next one it is true of. It is deliberately not
+        remembered and not gated on having changed: a record of "this chat has
+        been told" would go stale the moment a claim expired, and the absence of
+        the line on a later turn is then the only thing saying so. It costs a
+        line on turns the gateway really did check — on a dashboard where the
+        app claims, every turn — and nothing at all anywhere else, which is
+        every gateway that verifies nobody.
         """
         try:
             session_id = str(kwargs.get("session_id") or "")
@@ -853,6 +955,9 @@ class ContextModule:
             sender_id, source = self.sender_with_source(
                 str(kwargs.get("sender_id") or ""), session_id, take=True
             )
+            # Settled before anything is read, and true whether or not the app
+            # has a row for this login.
+            asserted = self.asserted_sender(source, sender_id)
             # One read of the app's metadata per turn at most, shared by the
             # shim and the top-up, and skipped entirely when neither needs it.
             cache: List[ContextSection] = []
@@ -869,19 +974,24 @@ class ContextModule:
                 # Nothing was ever frozen for this session and nothing ever
                 # will be. See `introduce`: this is the long-running chat that
                 # predates the plugin, and it fires once.
-                return self.introduce(session_id, sender_id, section_of, source)
+                return self.beside(
+                    asserted, self.introduce(session_id, sender_id, section_of, source)
+                )
 
             # Both endings are the same work, told apart by what has changed:
             # the app's metadata under the person this chat already knows, or the
             # person themselves. See `covers` for what "already knows" includes,
             # and `top_up` for why one function answers both.
-            return self.top_up(
-                session_id,
-                frozen,
-                sender_id,
-                section_of,
-                changed_sender=not self.covers(frozen, sender_id),
-                source=source,
+            return self.beside(
+                asserted,
+                self.top_up(
+                    session_id,
+                    frozen,
+                    sender_id,
+                    section_of,
+                    changed_sender=not self.covers(frozen, sender_id),
+                    source=source,
+                ),
             )
         except Exception as exc:
             logger.warning("hermie: could not add per-sender context: %s", exc)
