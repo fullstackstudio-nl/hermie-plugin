@@ -119,13 +119,21 @@ def test_a_rung_that_did_not_confirm_the_sender_says_so(rung):
     assert "may be somebody else" in text
 
 
-@pytest.mark.parametrize("rung", VERIFIED_RUNGS or (BY_CLAIM,))
+@pytest.mark.parametrize("rung", VERIFIED_RUNGS)
 def test_a_rung_that_did_confirm_the_sender_does_not_caution(rung):
-    """`VERIFIED_RUNGS` is empty today, so this pins the property against
-    `BY_CLAIM` instead of asserting nothing: a claim is in neither list right
-    now, not the cautioned one, and that has to keep holding once it moves
-    into `VERIFIED_RUNGS` in Task 2 — a rung this property is checked against
-    must never caution, whichever list currently contains it."""
+    """`VERIFIED_RUNGS` is genuinely empty today, so this has no cases to run.
+
+    Unlike the other empty-parametrize test below, there is no honest
+    stand-in rung to pin it against: `BY_CLAIM` — the one rung the plan moves
+    into `VERIFIED_RUNGS` in Task 2 — sits in `UNCONFIRMED_RUNGS` today, and
+    correctly so, because `PROFILE_UNCONFIRMED` is exactly as true of a
+    claimed turn as of any other unconfirmed one until the claim is bound to
+    the submit (`test_by_claim_is_cautioned_because_the_caution_is_still_true`
+    pins that directly). Once Task 2 moves `BY_CLAIM` into `VERIFIED_RUNGS`
+    (and, by `test_the_two_lists_do_not_overlap`, out of `UNCONFIRMED_RUNGS`
+    in the same change), this parametrize starts running for real with no
+    edit needed here.
+    """
     assert not cautions(render(person(), source=rung))
 
 
@@ -145,30 +153,39 @@ def test_a_rung_this_build_cannot_place_says_nothing(rung):
 
 def test_the_two_lists_do_not_overlap():
     assert not set(VERIFIED_RUNGS) & set(UNCONFIRMED_RUNGS)
-    # `BY_CLAIM` and `BY_PLATFORM` are the two rungs the split leaves out on
-    # purpose today. `BY_PLATFORM` permanently: a messaging platform names its
-    # own sender per message, which is Hermes' business and neither confirmed
-    # nor doubted by this plugin's own claim mechanism. `BY_CLAIM`
-    # provisionally: an authenticated claim is closer to proof than a rung this
-    # module has active reason to doubt, but not yet bound to the submit it was
-    # made for, so it gets neither the withdrawn assertion nor a caution it has
-    # not earned either way. Both produce no caution and no assertion.
-    assert set(VERIFIED_RUNGS) | set(UNCONFIRMED_RUNGS) | {BY_NOBODY, BY_CLAIM, BY_PLATFORM} == set(EVERY_RUNG)
+    # `BY_PLATFORM` is the one rung the split leaves out on purpose (D2 of the
+    # plan): a messaging platform names its own sender per message, which is
+    # Hermes' business and neither confirmed nor doubted by this plugin's own
+    # claim mechanism, so it produces no caution and no assertion.
+    assert set(VERIFIED_RUNGS) | set(UNCONFIRMED_RUNGS) | {BY_NOBODY, BY_PLATFORM} == set(EVERY_RUNG)
 
 
-@pytest.mark.parametrize("rung", (BY_CLAIM, BY_PLATFORM))
-def test_by_claim_and_by_platform_are_neither_verified_nor_cautioned(rung):
-    """Neither rung is in `VERIFIED_RUNGS` (no assertion) or `UNCONFIRMED_RUNGS`
-    (no caution) today — `BY_PLATFORM` because Hermes already named that sender
-    correctly and this plugin has nothing to add either way, `BY_CLAIM` because
-    an authenticated-but-not-yet-text-bound claim is neither proven nor a rung
-    with active reason to be doubted."""
-    text = render(person(), source=rung)
+def test_by_platform_is_neither_verified_nor_cautioned():
+    """A hook sender the dashboard did not admit is real (DESIGN.md) but this
+    plugin's own claim mechanism has nothing to say about it either way, so it
+    must produce neither `SENDER_VERIFIED` nor `PROFILE_UNCONFIRMED`."""
+    text = render(person(), source=BY_PLATFORM)
 
-    assert rung not in VERIFIED_RUNGS
-    assert rung not in UNCONFIRMED_RUNGS
+    assert BY_PLATFORM not in VERIFIED_RUNGS
+    assert BY_PLATFORM not in UNCONFIRMED_RUNGS
     assert not asserts_the_sender(text)
     assert not cautions(text)
+
+
+def test_by_claim_is_cautioned_because_the_caution_is_still_true():
+    """`BY_CLAIM` sits in `UNCONFIRMED_RUNGS`, not in neither list. It fires
+    only on the per-turn copy, and staying silent there would read as
+    confirmation by omission — `PROFILE_UNCONFIRMED` ("the gateway has not
+    confirmed who is sending") is exactly as true of a claimed turn as of any
+    other unconfirmed one, because the claim is bound to a session and not to
+    the submit it was made for (see "Decision (2026-09-22)" in DESIGN.md).
+    """
+    text = render(person(), source=BY_CLAIM)
+
+    assert BY_CLAIM not in VERIFIED_RUNGS
+    assert BY_CLAIM in UNCONFIRMED_RUNGS
+    assert not asserts_the_sender(text)
+    assert cautions(text)
 
 
 @pytest.mark.parametrize("rung", EVERY_RUNG + ("", "something this build does not know"))
@@ -511,9 +528,10 @@ def test_a_claimed_turn_is_resolved_for_the_claimer_without_asserting_anything()
     """A claim still changes whose profile a turn carries — that half of the
     feature is untouched — but nothing today may say the gateway checked it
     (`VERIFIED_RUNGS` is empty; see "Decision (2026-09-22)" in DESIGN.md).
-    `BY_CLAIM` is in neither list, so the switch itself is not cautioned either
-    — a caution is for a rung this module has active reason to doubt, and an
-    authenticated claim is not that, even before it is bound to the submit.
+    `BY_CLAIM` is in `UNCONFIRMED_RUNGS`, so the switch itself is cautioned too:
+    `PROFILE_UNCONFIRMED` is exactly as true of a claimed turn as of any other
+    unconfirmed one, and staying silent about it would read as confirmation by
+    omission.
     """
     claims = TurnClaims()
     module = module_for(two_people(), FakeSessionContext(**{UI_SESSION_ID: SID, USER_ID: OPENER}), claims)
@@ -526,8 +544,43 @@ def test_a_claimed_turn_is_resolved_for_the_claimer_without_asserting_anything()
     assert not asserts_the_sender(frozen)
     assert added is not None
     assert "Ana" in added["context"] and "Bo" not in added["context"]
-    assert not cautions(added["context"])
+    assert cautions(added["context"]), "an unproven claim was rendered as if it were confirmed"
     assert not asserts_the_sender(added["context"])
+
+
+def test_the_truncation_fix_holds_for_a_claimed_per_turn_copy_too():
+    """`BY_CLAIM` back in `UNCONFIRMED_RUNGS` is what widened the truncation
+    bug to the per-turn copy in the first place — this is that combination,
+    through the actual module path (`on_pre_llm_call` -> `introduce`, since
+    there is no frozen section yet) rather than a direct `render()` call, at a
+    realistic `context.max_chars`, with the extra `INTRODUCED` lead line this
+    path adds on top of everything `test_the_framing_survives_truncation_the_
+    way_the_caution_does` already covers for the frozen section's own render
+    path.
+    """
+    claims = TurnClaims()
+    section = [
+        (
+            "",
+            bag({LOGIN: {"displayName": "Ana", "about": "x" * 400, "perBot": {"a-bot": "y" * 400}}}),
+        )
+    ]
+    module = module_for(
+        section,
+        FakeSessionContext(**{UI_SESSION_ID: SID}),
+        claims,
+        settings={"context.max_chars": 1200},
+    )
+    claims.claim(SID, LOGIN)
+
+    added = module.on_pre_llm_call(session_id="durable-1", sender_id="")
+
+    assert added is not None
+    text = added["context"]
+    assert len(text) <= 1200
+    assert cautions(text)
+    assert text.endswith(FRAMING_GATEWAY), "the framing was cut off by the hard truncation"
+    assert "Ana" in text
 
 
 def test_the_frozen_section_ignores_a_claim_that_exists_when_it_is_built():
@@ -645,9 +698,9 @@ def test_beside_places_an_assertion_after_the_copy_when_there_is_one():
 
 
 def test_nothing_is_appended_after_a_claimed_turns_copy_today():
-    """`BY_CLAIM` is in neither list, so this copy carries no caution and ends
-    with the plain framing line, not the gateway one — and, either way,
-    nothing today is ever appended after it."""
+    """`BY_CLAIM` is in `UNCONFIRMED_RUNGS`, so this copy carries the caution
+    and ends with the gateway framing line — and, either way, nothing today is
+    ever appended after it, because nothing is asserted."""
     claims = TurnClaims()
     module = module_for(two_people(), FakeSessionContext(**{UI_SESSION_ID: SID}), claims)
     freeze(module)
@@ -656,9 +709,8 @@ def test_nothing_is_appended_after_a_claimed_turns_copy_today():
     added = module.on_pre_llm_call(session_id="durable-1", sender_id=OPENER)
 
     assert added is not None
-    assert added["context"].endswith(FRAMING)
-    assert not added["context"].endswith(FRAMING_GATEWAY)
-    assert not cautions(added["context"])
+    assert added["context"].endswith(FRAMING_GATEWAY)
+    assert cautions(added["context"])
     assert not asserts_the_sender(added["context"])
     assert "Ana" in added["context"] and "Bo" not in added["context"]
 

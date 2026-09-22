@@ -82,19 +82,20 @@ SENDER_RUNGS = (BY_CLAIM, BY_HOOK, BY_PLATFORM, BY_LIVE_SESSION, BY_SESSION_VARS
 # yet — `VERIFIED_RUNGS` is empty until it does, and `asserted_sender` in
 # `__init__.py` answers `""` for every rung there is.
 #
-# `BY_CLAIM` and `BY_PLATFORM` both sit in neither list today, and for the same
-# underlying reason even though it reads differently for each. `BY_PLATFORM`
-# is permanent: a messaging platform names its own sender per message, which is
-# Hermes' business and something this plugin's claim mechanism neither confirms
-# nor doubts, so it produces no caution and no assertion regardless of what
-# lands later. `BY_CLAIM` is provisional: an authenticated claim is not nothing
-# — it is closer to proof than a rung that merely names whoever opened the
-# session — but it is not yet bound to the submit it was made for either, so it
-# gets neither the assertion (correctly withdrawn) nor the fallback caution
-# (which exists for a rung this module has active reason to doubt, and a claim
-# is not that). It moves into `VERIFIED_RUNGS` once bound to `sha256` of the
-# exact prompt text; nothing about it moves into `UNCONFIRMED_RUNGS` in the
-# meantime.
+# `BY_CLAIM` sits in `UNCONFIRMED_RUNGS`, alongside every rung that names the
+# opener, rather than in neither list. The rung fires only on the per-turn
+# copy (`render_section` never reaches it — see below), and the sentence that
+# copy would otherwise carry by staying silent — nothing at all — would be
+# read as confirmation by omission. `PROFILE_UNCONFIRMED` is true of a
+# claimed turn today exactly as it is of any other unconfirmed one: the
+# gateway has not confirmed who is sending, because a claim is bound to a
+# *session* and not to the submit it was made for. Moving it out of the
+# cautioned set does not make that sentence any less true; it only stops the
+# turn from saying it. `BY_PLATFORM` is the one rung that sits in neither: a
+# messaging platform names its own sender per message, which is Hermes'
+# business and something this plugin's claim mechanism neither confirms nor
+# doubts, so it produces no caution and no assertion regardless of what lands
+# later.
 #
 # Every other rung names the person who OPENED the session, on every turn of
 # it. That is not a hedge, it is this repo's own finding (DESIGN.md, "A shared
@@ -108,10 +109,11 @@ SENDER_RUNGS = (BY_CLAIM, BY_HOOK, BY_PLATFORM, BY_LIVE_SESSION, BY_SESSION_VARS
 #
 # The two lists are disjoint, `VERIFIED_RUNGS` is the closed one, and a rung
 # this module does not know about — the empty one a caller that has not been
-# told passes included, and `BY_CLAIM` and `BY_PLATFORM` beside it — is in
-# neither. Every direction fails towards silence.
+# told passes included, and `BY_PLATFORM` beside it — is in neither. Every
+# direction fails towards silence.
 VERIFIED_RUNGS = ()
 UNCONFIRMED_RUNGS = (
+    BY_CLAIM,
     BY_HOOK,
     BY_LIVE_SESSION,
     BY_SESSION_VARS,
