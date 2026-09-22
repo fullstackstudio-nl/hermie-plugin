@@ -68,7 +68,7 @@ def test_a_limit_of_zero_does_not_divide_by_it():
 def entries():
     return {
         "memory": [
-            "Sebas runs FullStack Studio and prefers short answers.",
+            "Kim runs Willow Studio and prefers short answers.",
             "The gateway restart on 2026-09-21 lost the cron schedule.",
             "Ask @max before touching the invoice templates. #billing",
         ],
@@ -84,8 +84,8 @@ def test_search_finds_across_both_targets():
 
 
 def test_every_word_has_to_match_and_order_does_not():
-    assert browse.search(entries(), "studio sebas")["count"] == 1
-    assert browse.search(entries(), "sebas invoice")["count"] == 0
+    assert browse.search(entries(), "studio kim")["count"] == 1
+    assert browse.search(entries(), "kim invoice")["count"] == 0
 
 
 def test_an_empty_query_matches_nothing_rather_than_everything():
@@ -104,10 +104,10 @@ def test_a_query_that_looks_like_a_regex_is_read_as_text():
 
 
 def test_the_cheap_topics_are_the_four_that_were_asked_for():
-    found = browse.topics_in("Ask @max about FullStack Studio on 2026-09-21 #billing")
+    found = browse.topics_in("Ask @max about Willow Studio on 2026-09-21 #billing")
 
     assert "max" in found and "billing" in found
-    assert "2026-09-21" in found and "FullStack Studio" in found
+    assert "2026-09-21" in found and "Willow Studio" in found
 
 
 def test_a_sentence_opener_is_not_a_topic():

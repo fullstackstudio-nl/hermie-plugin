@@ -41,8 +41,8 @@ def bag(users, default=""):
 
 def person(**overrides):
     entry = {
-        "displayName": "Sebas",
-        "about": "Runs FullStack Studio. Prefers short answers.",
+        "displayName": "Kim",
+        "about": "Runs Willow Studio. Prefers short answers.",
         "device": {"model": "iPhone 17 Pro", "os": "iOS 27", "appVersion": "1.4.0"},
         "timezone": "Europe/Amsterdam",
         "locale": "nl-NL",
@@ -94,39 +94,39 @@ def module_for(sections, *, login=None, settings=None):
 
 def test_it_names_the_person_and_how_it_found_them():
     module = module_for(
-        [("ef11a9", bag({"ef11a9": person()})), ("ana", bag({"ana": person(displayName="Ana")}))],
-        login="self-hosted:ef11a9",
+        [("7f3c02", bag({"7f3c02": person()})), ("ana", bag({"ana": person(displayName="Ana")}))],
+        login="self-hosted:7f3c02",
     )
 
     answer = module.on_me_command()
     assert "Hermie context for jurist" in answer
-    assert "Sebas" in answer
+    assert "Kim" in answer
     assert RUNGS[BY_LIVE_SESSION] in answer
     # Both spellings, because which one is missing is the usual bug.
-    assert "self-hosted:ef11a9" in answer
-    assert "ef11a9" in answer
+    assert "self-hosted:7f3c02" in answer
+    assert "7f3c02" in answer
 
 
 def test_it_reports_the_person_the_app_wrote():
-    module = module_for([("ef11a9", bag({"ef11a9": person()}))], login="self-hosted:ef11a9")
+    module = module_for([("7f3c02", bag({"7f3c02": person()}))], login="self-hosted:7f3c02")
 
     answer = module.on_me_command()
     assert "iPhone 17 Pro running iOS 27" in answer
     assert "Europe/Amsterdam, nl-NL" in answer
-    assert "Runs FullStack Studio" in answer
+    assert "Runs Willow Studio" in answer
     assert "Always cite the article number." in answer
 
 
 def test_it_names_the_key_the_entry_came_from_and_when_it_was_written():
-    module = module_for([("ef11a9", bag({"ef11a9": person()}))], login="self-hosted:ef11a9")
+    module = module_for([("7f3c02", bag({"7f3c02": person()}))], login="self-hosted:7f3c02")
 
     answer = module.on_me_command()
-    assert "hermie-app:ef11a9" in answer
+    assert "hermie-app:7f3c02" in answer
     assert "updated 2026-09-21" in answer
 
 
 def test_the_legacy_key_says_it_is_the_shared_one():
-    module = module_for([("", bag({"ef11a9": person()}))])
+    module = module_for([("", bag({"7f3c02": person()}))])
 
     answer = module.on_me_command()
     assert "hermie-app" in answer
@@ -135,20 +135,20 @@ def test_the_legacy_key_says_it_is_the_shared_one():
 
 
 def test_a_bot_with_no_note_of_its_own_does_not_borrow_one():
-    module = module_for([("ef11a9", bag({"ef11a9": person()}))], login="self-hosted:ef11a9")
+    module = module_for([("7f3c02", bag({"7f3c02": person()}))], login="self-hosted:7f3c02")
     module.runtime.bot = "marketing"
 
     assert "Always cite the article number." not in module.on_me_command()
 
 
 def test_it_says_nobody_and_what_to_do_about_it():
-    module = module_for([("", bag({"ef11a9": person(), "ana": person(displayName="Ana")}))])
+    module = module_for([("", bag({"7f3c02": person(), "ana": person(displayName="Ana")}))])
 
     answer = module.on_me_command()
     assert "nobody" in answer
     assert "2 people are registered" in answer
     assert FIX in answer
-    assert "Sebas" not in answer
+    assert "Kim" not in answer
     assert "Ana" not in answer
 
 
@@ -156,7 +156,7 @@ def test_a_sender_nobody_registered_is_shown_rather_than_swallowed():
     """"The gateway said nothing" and "it said someone we do not know" are
     different problems, and only one of them is the app's."""
     module = module_for(
-        [("", bag({"ef11a9": person(), "ana": person(displayName="Ana")}))],
+        [("", bag({"7f3c02": person(), "ana": person(displayName="Ana")}))],
         login="oidc:stranger",
     )
 
@@ -174,13 +174,13 @@ def test_nobody_registered_at_all_says_so():
 
 
 def test_an_essay_cannot_become_the_answer():
-    module = module_for([("ef11a9", bag({"ef11a9": person(about="x" * 5000)}))])
+    module = module_for([("7f3c02", bag({"7f3c02": person(about="x" * 5000)}))])
 
     assert len(module.on_me_command()) <= MAX_CHARS
 
 
 def test_a_broken_report_is_not_a_broken_session():
-    module = module_for([("ef11a9", bag({"ef11a9": person()}))])
+    module = module_for([("7f3c02", bag({"7f3c02": person()}))])
     module.section = lambda: (_ for _ in ()).throw(RuntimeError("no metadata today"))
 
     assert "could not work out" in module.on_me_command()

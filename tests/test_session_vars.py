@@ -109,12 +109,12 @@ def fake_gateway(auth_user_id, *, sid="sid-1", session_key="key-1"):
 
 def test_the_variables_are_filled_when_they_are_empty():
     hermes = FakeSessionContext()
-    module = module_for([("u1", bag({"u1": {"displayName": "Sebas", "userIdAlt": "alt-1"}}))], hermes)
+    module = module_for([("u1", bag({"u1": {"displayName": "Kim", "userIdAlt": "alt-1"}}))], hermes)
 
     assert module.fill_session_vars("u1", module.section) == {
-        USER_ID: "u1", USER_ID_ALT: "alt-1", USER_NAME: "Sebas",
+        USER_ID: "u1", USER_ID_ALT: "alt-1", USER_NAME: "Kim",
     }
-    assert hermes.snapshot() == {USER_ID: "u1", USER_ID_ALT: "alt-1", USER_NAME: "Sebas"}
+    assert hermes.snapshot() == {USER_ID: "u1", USER_ID_ALT: "alt-1", USER_NAME: "Kim"}
 
 
 def test_a_gateway_that_already_names_this_person_is_left_alone():
@@ -125,7 +125,7 @@ def test_a_gateway_that_already_names_this_person_is_left_alone():
     nothing to correct and nothing to read.
     """
     hermes = FakeSessionContext(**{USER_ID: "oidc:u1"})
-    module = module_for([("u1", bag({"u1": {"displayName": "Sebas"}}))], hermes)
+    module = module_for([("u1", bag({"u1": {"displayName": "Kim"}}))], hermes)
 
     assert module.fill_session_vars("u1", module.section) == {}
     assert hermes.snapshot() == {USER_ID: "oidc:u1"}
@@ -142,14 +142,14 @@ def test_a_variable_naming_somebody_else_is_put_right():
     """
     hermes = FakeSessionContext(**{USER_ID: "u2", USER_NAME: "Ana"})
     module = module_for(
-        [("", bag({"u1": {"displayName": "Sebas", "userIdAlt": "alt-1"}, "u2": {"displayName": "Ana"}}))],
+        [("", bag({"u1": {"displayName": "Kim", "userIdAlt": "alt-1"}, "u2": {"displayName": "Ana"}}))],
         hermes,
     )
 
     assert module.fill_session_vars("u1", module.section) == {
-        USER_ID: "u1", USER_ID_ALT: "alt-1", USER_NAME: "Sebas",
+        USER_ID: "u1", USER_ID_ALT: "alt-1", USER_NAME: "Kim",
     }
-    assert hermes.snapshot() == {USER_ID: "u1", USER_ID_ALT: "alt-1", USER_NAME: "Sebas"}
+    assert hermes.snapshot() == {USER_ID: "u1", USER_ID_ALT: "alt-1", USER_NAME: "Kim"}
 
 
 def test_a_name_belonging_to_the_previous_person_does_not_survive_the_correction():
@@ -164,7 +164,7 @@ def test_a_name_belonging_to_the_previous_person_does_not_survive_the_correction
 def test_nothing_is_rewritten_while_the_gateway_names_nobody_for_this_turn():
     """A bound login beats nothing at all; there is no better answer to give."""
     hermes = FakeSessionContext(**{USER_ID: "u2", USER_NAME: "Ana"})
-    module = module_for([("", bag({"u1": {"displayName": "Sebas"}}, default="u1"))], hermes)
+    module = module_for([("", bag({"u1": {"displayName": "Kim"}}, default="u1"))], hermes)
 
     assert module.fill_session_vars("", module.section) == {}
     assert hermes.snapshot() == {USER_ID: "u2", USER_NAME: "Ana"}
@@ -172,7 +172,7 @@ def test_nothing_is_rewritten_while_the_gateway_names_nobody_for_this_turn():
 
 def test_a_variable_that_already_has_a_value_keeps_it():
     hermes = FakeSessionContext(**{USER_NAME: "set by the gateway"})
-    module = module_for([("u1", bag({"u1": {"displayName": "Sebas"}}))], hermes)
+    module = module_for([("u1", bag({"u1": {"displayName": "Kim"}}))], hermes)
 
     assert module.fill_session_vars("u1", module.section) == {USER_ID: "u1"}
     assert hermes.snapshot()[USER_NAME] == "set by the gateway"
@@ -180,14 +180,14 @@ def test_a_variable_that_already_has_a_value_keeps_it():
 
 def test_the_only_registered_person_is_named_when_the_gateway_names_nobody():
     hermes = FakeSessionContext()
-    module = module_for([("u1", bag({"u1": {"displayName": "Sebas"}}))], hermes)
+    module = module_for([("u1", bag({"u1": {"displayName": "Kim"}}))], hermes)
 
     assert module.fill_session_vars("", module.section)[USER_ID] == "u1"
 
 
 def test_several_people_and_no_sender_names_nobody():
     hermes = FakeSessionContext()
-    module = module_for([("", bag({"u1": {"displayName": "Sebas"}, "u2": {"displayName": "Ana"}}))], hermes)
+    module = module_for([("", bag({"u1": {"displayName": "Kim"}, "u2": {"displayName": "Ana"}}))], hermes)
 
     assert module.fill_session_vars("", module.section) == {}
     assert hermes.snapshot() == {}
@@ -196,7 +196,7 @@ def test_several_people_and_no_sender_names_nobody():
 def test_a_sender_with_no_entry_is_still_named_but_borrows_nobodys_name():
     """The id is a fact from the gateway; the display name would be a guess."""
     hermes = FakeSessionContext()
-    module = module_for([("", bag({"u1": {"displayName": "Sebas"}}, default="u1"))], hermes)
+    module = module_for([("", bag({"u1": {"displayName": "Kim"}}, default="u1"))], hermes)
 
     assert module.fill_session_vars("u2", module.section) == {USER_ID: "u2"}
 
@@ -204,7 +204,7 @@ def test_a_sender_with_no_entry_is_still_named_but_borrows_nobodys_name():
 def test_the_setting_switches_it_off():
     hermes = FakeSessionContext()
     module = module_for(
-        [("u1", bag({"u1": {"displayName": "Sebas"}}))], hermes, settings={"context.session_vars": False}
+        [("u1", bag({"u1": {"displayName": "Kim"}}))], hermes, settings={"context.session_vars": False}
     )
 
     assert module.fill_session_vars("u1", module.section) == {}
@@ -213,7 +213,7 @@ def test_the_setting_switches_it_off():
 
 def test_a_gateway_without_the_session_variables_costs_nothing():
     """An older Hermes, or a run outside one, must not fail the turn."""
-    module = module_for([("u1", bag({"u1": {"displayName": "Sebas"}}))], None)
+    module = module_for([("u1", bag({"u1": {"displayName": "Kim"}}))], None)
 
     assert module.session_vars.available() is False
     assert module.fill_session_vars("u1", module.section) == {}
@@ -221,10 +221,10 @@ def test_a_gateway_without_the_session_variables_costs_nothing():
 
 def test_the_hook_fills_them_on_its_way_past():
     hermes = FakeSessionContext()
-    module = module_for([("u1", bag({"u1": {"displayName": "Sebas"}}))], hermes)
+    module = module_for([("u1", bag({"u1": {"displayName": "Kim"}}))], hermes)
 
     module.on_pre_llm_call(session_id="s1", sender_id="u1")
-    assert hermes.snapshot() == {USER_ID: "u1", USER_NAME: "Sebas"}
+    assert hermes.snapshot() == {USER_ID: "u1", USER_NAME: "Kim"}
 
 
 def test_the_alternative_id_is_read_from_the_person_the_app_wrote():
@@ -238,7 +238,7 @@ def test_the_alternative_id_is_read_from_the_person_the_app_wrote():
 
 
 def two_people():
-    return [("", bag({"u1": {"displayName": "Sebas"}, "u2": {"displayName": "Ana"}}))]
+    return [("", bag({"u1": {"displayName": "Kim"}, "u2": {"displayName": "Ana"}}))]
 
 
 def test_the_session_variable_names_the_sender_when_the_kwarg_is_empty():
@@ -254,7 +254,7 @@ def test_the_kwarg_still_wins_over_the_session_variable():
     module = module_for(two_people(), hermes)
 
     added = module.on_pre_llm_call(session_id="s1", sender_id="u1")
-    assert "Sebas" in added["context"]
+    assert "Kim" in added["context"]
 
 
 def test_the_frozen_section_names_the_session_user():
@@ -302,33 +302,33 @@ def test_a_gateway_without_the_session_variables_asks_nobody():
 def test_a_prefixed_login_is_written_as_the_gateway_spelled_it():
     """The id is the gateway's fact; the name comes off the person it names."""
     hermes = FakeSessionContext()
-    module = module_for([("ef11a9", bag({"ef11a9": {"displayName": "Sebas", "userIdAlt": "alt-1"}}))], hermes)
+    module = module_for([("7f3c02", bag({"7f3c02": {"displayName": "Kim", "userIdAlt": "alt-1"}}))], hermes)
 
-    assert module.fill_session_vars("self-hosted:ef11a9", module.section) == {
-        USER_ID: "self-hosted:ef11a9", USER_ID_ALT: "alt-1", USER_NAME: "Sebas",
+    assert module.fill_session_vars("self-hosted:7f3c02", module.section) == {
+        USER_ID: "self-hosted:7f3c02", USER_ID_ALT: "alt-1", USER_NAME: "Kim",
     }
 
 
 def test_the_frozen_section_already_covers_the_same_person_under_either_spelling():
     hermes = FakeSessionContext()
     module = module_for(
-        [("", bag({"ef11a9": {"displayName": "Sebas"}, "ana": {"displayName": "Ana"}}, default="ef11a9"))],
+        [("", bag({"7f3c02": {"displayName": "Kim"}, "ana": {"displayName": "Ana"}}, default="7f3c02"))],
         hermes,
     )
 
     module.render_section({"session_id": "s1", "profile_name": "jurist"})
-    assert module.on_pre_llm_call(session_id="s1", sender_id="self-hosted:ef11a9") is None
+    assert module.on_pre_llm_call(session_id="s1", sender_id="self-hosted:7f3c02") is None
 
 
 def test_a_covered_sender_is_recognised_without_re_reading_the_metadata():
     """Either spelling of the frozen person ends the turn before the file read."""
-    hermes = FakeSessionContext(**{USER_ID: "self-hosted:ef11a9"})
-    runtime = FakeRuntime([("", bag({"ef11a9": {"displayName": "Sebas"}, "ana": {"displayName": "Ana"}}))])
+    hermes = FakeSessionContext(**{USER_ID: "self-hosted:7f3c02"})
+    runtime = FakeRuntime([("", bag({"7f3c02": {"displayName": "Kim"}, "ana": {"displayName": "Ana"}}))])
     module = ContextModule(runtime, session_vars=SessionVars(hermes))
 
-    assert "Sebas" in module.render_section({"session_id": "s1", "profile_name": "jurist"})
+    assert "Kim" in module.render_section({"session_id": "s1", "profile_name": "jurist"})
     reads = runtime.reads
-    assert module.on_pre_llm_call(session_id="s1", sender_id="self-hosted:ef11a9") is None
+    assert module.on_pre_llm_call(session_id="s1", sender_id="self-hosted:7f3c02") is None
     assert runtime.reads == reads
 
 
@@ -339,21 +339,21 @@ def test_a_covered_sender_is_recognised_without_re_reading_the_metadata():
 
 
 def two_logins():
-    return [("", bag({"ef11a9": {"displayName": "Sebas"}, "ana": {"displayName": "Ana"}}))]
+    return [("", bag({"7f3c02": {"displayName": "Kim"}, "ana": {"displayName": "Ana"}}))]
 
 
 def test_the_live_record_names_the_sender_when_nothing_else_does():
-    module = module_for(two_logins(), FakeSessionContext(), gateway=fake_gateway("self-hosted:ef11a9"))
+    module = module_for(two_logins(), FakeSessionContext(), gateway=fake_gateway("self-hosted:7f3c02"))
 
     added = module.on_pre_llm_call(session_id="key-1", sender_id="")
-    assert "Sebas" in added["context"]
+    assert "Kim" in added["context"]
 
 
 def test_the_id_may_come_from_the_session_variables_rather_than_the_hook():
     hermes = FakeSessionContext(**{UI_SESSION_ID: "sid-1"})
-    module = module_for(two_logins(), hermes, gateway=fake_gateway("self-hosted:ef11a9"))
+    module = module_for(two_logins(), hermes, gateway=fake_gateway("self-hosted:7f3c02"))
 
-    assert "Sebas" in module.on_pre_llm_call(session_id="", sender_id="")["context"]
+    assert "Kim" in module.on_pre_llm_call(session_id="", sender_id="")["context"]
 
 
 def test_the_live_record_beats_the_session_variable():
@@ -365,9 +365,9 @@ def test_the_live_record_beats_the_session_variable():
     question being asked.
     """
     hermes = FakeSessionContext(**{USER_ID: "ana"})
-    module = module_for(two_logins(), hermes, gateway=fake_gateway("self-hosted:ef11a9"))
+    module = module_for(two_logins(), hermes, gateway=fake_gateway("self-hosted:7f3c02"))
 
-    assert "Sebas" in module.on_pre_llm_call(session_id="key-1", sender_id="")["context"]
+    assert "Kim" in module.on_pre_llm_call(session_id="key-1", sender_id="")["context"]
 
 
 def test_the_session_variable_is_still_asked_where_no_record_answers():
@@ -380,16 +380,16 @@ def test_the_session_variable_is_still_asked_where_no_record_answers():
 
 def test_the_hook_sender_beats_both():
     hermes = FakeSessionContext(**{USER_ID: "ana"})
-    module = module_for(two_logins(), hermes, gateway=fake_gateway("self-hosted:ef11a9"))
+    module = module_for(two_logins(), hermes, gateway=fake_gateway("self-hosted:7f3c02"))
 
-    assert "Sebas" in module.on_pre_llm_call(session_id="key-1", sender_id="ef11a9")["context"]
+    assert "Kim" in module.on_pre_llm_call(session_id="key-1", sender_id="7f3c02")["context"]
 
 
 def test_the_frozen_section_asks_the_live_record_too():
-    module = module_for(two_logins(), FakeSessionContext(), gateway=fake_gateway("self-hosted:ef11a9"))
+    module = module_for(two_logins(), FakeSessionContext(), gateway=fake_gateway("self-hosted:7f3c02"))
 
     text = module.render_section({"session_id": "key-1", "profile_name": "jurist"})
-    assert "Sebas" in text
+    assert "Kim" in text
     assert module.on_pre_llm_call(session_id="key-1", sender_id="") is None
 
 
@@ -404,14 +404,14 @@ def test_the_live_login_is_what_hermes_is_told_this_turn():
     """The prefixed id is the gateway's own fact; the name is the app's."""
     hermes = FakeSessionContext()
     module = module_for(
-        [("ef11a9", bag({"ef11a9": {"displayName": "Sebas", "userIdAlt": "alt-1"}}))],
+        [("7f3c02", bag({"7f3c02": {"displayName": "Kim", "userIdAlt": "alt-1"}}))],
         hermes,
-        gateway=fake_gateway("self-hosted:ef11a9"),
+        gateway=fake_gateway("self-hosted:7f3c02"),
     )
 
     module.on_pre_llm_call(session_id="key-1", sender_id="")
-    assert hermes.snapshot()[USER_ID] == "self-hosted:ef11a9"
-    assert hermes.snapshot()[USER_NAME] == "Sebas"
+    assert hermes.snapshot()[USER_ID] == "self-hosted:7f3c02"
+    assert hermes.snapshot()[USER_NAME] == "Kim"
     assert hermes.snapshot()[USER_ID_ALT] == "alt-1"
 
 

@@ -74,9 +74,9 @@ def bag(users, default=""):
 
 
 def one(**overrides):
-    entry = {"displayName": "Sebas", "about": "Prefers short answers."}
+    entry = {"displayName": "Kim", "about": "Prefers short answers."}
     entry.update(overrides)
-    return [("", bag({"ef11a9": entry}, default="ef11a9"))]
+    return [("", bag({"7f3c02": entry}, default="7f3c02"))]
 
 
 def module_for(sections, settings=None):
@@ -100,7 +100,7 @@ def test_an_edit_reaches_the_very_next_turn_of_an_open_chat():
 
     module.runtime.edited(one(about="Wants the long version now."))
 
-    added = module.on_pre_llm_call(session_id="s1", sender_id="ef11a9")
+    added = module.on_pre_llm_call(session_id="s1", sender_id="7f3c02")
     assert added is not None, "an edit made mid-chat never reached the bot"
     assert "Wants the long version now." in added["context"]
 
@@ -111,7 +111,7 @@ def test_the_newer_copy_says_it_beats_the_one_in_the_system_prompt():
     freeze(module)
     module.runtime.edited(one(about="Wants the long version now."))
 
-    assert module.on_pre_llm_call(session_id="s1", sender_id="ef11a9")["context"].startswith(SUPERSEDES)
+    assert module.on_pre_llm_call(session_id="s1", sender_id="7f3c02")["context"].startswith(SUPERSEDES)
 
 
 def test_an_ungated_gateway_gets_it_too():
@@ -135,7 +135,7 @@ def test_clearing_it_is_said_out_loud_rather_than_left_standing():
     freeze(module)
     module.runtime.edited([("", bag({}))])
 
-    assert module.on_pre_llm_call(session_id="s1", sender_id="ef11a9") == {"context": RETRACTED}
+    assert module.on_pre_llm_call(session_id="s1", sender_id="7f3c02") == {"context": RETRACTED}
 
 
 def test_the_bot_note_for_this_chat_changes_too():
@@ -144,7 +144,7 @@ def test_the_bot_note_for_this_chat_changes_too():
 
     module.runtime.edited(one(perBot={"jurist": "Never cite anything."}))
 
-    assert "Never cite anything." in module.on_pre_llm_call(session_id="s1", sender_id="ef11a9")["context"]
+    assert "Never cite anything." in module.on_pre_llm_call(session_id="s1", sender_id="7f3c02")["context"]
 
 
 def test_the_superseding_copy_is_bounded_like_every_other_one():
@@ -153,7 +153,7 @@ def test_the_superseding_copy_is_bounded_like_every_other_one():
     freeze(module)
     module.runtime.edited(one(about="y" * 600))
 
-    assert len(module.on_pre_llm_call(session_id="s1", sender_id="ef11a9")["context"]) <= 120
+    assert len(module.on_pre_llm_call(session_id="s1", sender_id="7f3c02")["context"]) <= 120
 
 
 # -- and costs nothing on every other turn -----------------------------------
@@ -165,7 +165,7 @@ def test_a_turn_where_nothing_changed_reads_nothing():
     freeze(module)
     reads = module.runtime.reads
 
-    assert module.on_pre_llm_call(session_id="s1", sender_id="ef11a9") is None
+    assert module.on_pre_llm_call(session_id="s1", sender_id="7f3c02") is None
     assert module.runtime.reads == reads, "a quiet turn parsed the profile anyway"
     assert module.runtime.stamps == 2, "a quiet turn should cost exactly one stat"
 
@@ -176,7 +176,7 @@ def test_a_file_that_moved_for_something_else_injects_nothing():
     freeze(module)
     module.runtime.touched()
 
-    assert module.on_pre_llm_call(session_id="s1", sender_id="ef11a9") is None
+    assert module.on_pre_llm_call(session_id="s1", sender_id="7f3c02") is None
 
 
 def test_a_file_that_moved_for_something_else_is_looked_at_once():
@@ -184,10 +184,10 @@ def test_a_file_that_moved_for_something_else_is_looked_at_once():
     module = module_for(one())
     freeze(module)
     module.runtime.touched()
-    module.on_pre_llm_call(session_id="s1", sender_id="ef11a9")
+    module.on_pre_llm_call(session_id="s1", sender_id="7f3c02")
     reads = module.runtime.reads
 
-    assert module.on_pre_llm_call(session_id="s1", sender_id="ef11a9") is None
+    assert module.on_pre_llm_call(session_id="s1", sender_id="7f3c02") is None
     assert module.runtime.reads == reads
 
 
@@ -196,8 +196,8 @@ def test_the_same_edit_is_not_re_injected_every_turn_afterwards():
     freeze(module)
     module.runtime.edited(one(about="Wants the long version now."))
 
-    assert module.on_pre_llm_call(session_id="s1", sender_id="ef11a9") is not None
-    assert module.on_pre_llm_call(session_id="s1", sender_id="ef11a9") is None
+    assert module.on_pre_llm_call(session_id="s1", sender_id="7f3c02") is not None
+    assert module.on_pre_llm_call(session_id="s1", sender_id="7f3c02") is None
 
 
 def test_a_rebuild_boundary_re_freezes_and_the_turn_goes_quiet_again():
@@ -207,14 +207,14 @@ def test_a_rebuild_boundary_re_freezes_and_the_turn_goes_quiet_again():
     module.runtime.edited(one(about="Wants the long version now."))
 
     freeze(module)  # core re-rendered: the prompt now carries the new text
-    assert module.on_pre_llm_call(session_id="s1", sender_id="ef11a9") is None
+    assert module.on_pre_llm_call(session_id="s1", sender_id="7f3c02") is None
 
 
 def test_another_person_still_gets_their_own_context():
     """The sender the section does not cover is the path that already existed."""
-    sections = [("", bag({"ef11a9": {"displayName": "Sebas"}, "ana": {"displayName": "Ana"}}, default="ef11a9"))]
+    sections = [("", bag({"7f3c02": {"displayName": "Kim"}, "ana": {"displayName": "Ana"}}, default="7f3c02"))]
     module = module_for(sections)
-    assert "Sebas" in freeze(module)
+    assert "Kim" in freeze(module)
 
     assert "Ana" in module.on_pre_llm_call(session_id="s1", sender_id="ana")["context"]
 
@@ -235,10 +235,10 @@ def test_a_first_copy_does_not_claim_to_replace_an_empty_one():
     module = module_for(one(displayName="", about=""))
     assert freeze(module) == ""
 
-    module.runtime.edited(one(displayName="Sebas", about="Prefers short answers."))
+    module.runtime.edited(one(displayName="Kim", about="Prefers short answers."))
 
-    added = module.on_pre_llm_call(session_id="s1", sender_id="ef11a9")
-    assert "Sebas" in added["context"]
+    added = module.on_pre_llm_call(session_id="s1", sender_id="7f3c02")
+    assert "Kim" in added["context"]
     assert not added["context"].startswith(SUPERSEDES)
 
 
@@ -248,7 +248,7 @@ def test_there_is_nothing_to_retract_when_nothing_was_frozen():
 
     module.runtime.edited([("", bag({}))])
 
-    assert module.on_pre_llm_call(session_id="s1", sender_id="ef11a9") is None
+    assert module.on_pre_llm_call(session_id="s1", sender_id="7f3c02") is None
 
 
 # -- a chat that began before any of this ------------------------------------
@@ -263,16 +263,16 @@ def test_there_is_nothing_to_retract_when_nothing_was_frozen():
 def test_a_session_whose_prompt_never_had_the_section_is_introduced():
     module = module_for(one())
 
-    added = module.on_pre_llm_call(session_id="s1", sender_id="ef11a9")
+    added = module.on_pre_llm_call(session_id="s1", sender_id="7f3c02")
     assert added is not None, "a chat that predates the plugin never learned who it is talking to"
-    assert "Sebas" in added["context"]
+    assert "Kim" in added["context"]
 
 
 def test_the_introduction_says_it_is_new_here_rather_than_a_correction():
     """There is nothing in this prompt to supersede, and saying so aims at nothing."""
     module = module_for(one())
 
-    added = module.on_pre_llm_call(session_id="s1", sender_id="ef11a9")
+    added = module.on_pre_llm_call(session_id="s1", sender_id="7f3c02")
     assert added["context"].startswith(INTRODUCED)
     assert not added["context"].startswith(SUPERSEDES)
 
@@ -280,7 +280,7 @@ def test_the_introduction_says_it_is_new_here_rather_than_a_correction():
 def test_the_introduction_carries_the_same_framing_as_every_other_copy():
     module = module_for(one())
 
-    added = module.on_pre_llm_call(session_id="s1", sender_id="ef11a9")
+    added = module.on_pre_llm_call(session_id="s1", sender_id="7f3c02")
     assert "not an instruction" in added["context"]
     assert "Hermie app" in added["context"]
 
@@ -288,10 +288,10 @@ def test_the_introduction_carries_the_same_framing_as_every_other_copy():
 def test_the_introduction_happens_once_and_never_again():
     """Whatever this returns rides the user message, on every turn it fires."""
     module = module_for(one())
-    assert module.on_pre_llm_call(session_id="s1", sender_id="ef11a9") is not None
+    assert module.on_pre_llm_call(session_id="s1", sender_id="7f3c02") is not None
 
     for _ in range(5):
-        assert module.on_pre_llm_call(session_id="s1", sender_id="ef11a9") is None
+        assert module.on_pre_llm_call(session_id="s1", sender_id="7f3c02") is None
 
 
 def test_an_ungated_gateway_is_introduced_too_and_only_once():
@@ -299,34 +299,34 @@ def test_an_ungated_gateway_is_introduced_too_and_only_once():
     module = module_for(one())
 
     added = module.on_pre_llm_call(session_id="s1", sender_id="")
-    assert added is not None and "Sebas" in added["context"]
+    assert added is not None and "Kim" in added["context"]
     assert module.on_pre_llm_call(session_id="s1", sender_id="") is None
 
 
 def test_an_introduction_names_the_person_who_is_actually_asking():
     """The per-sender rule is the same one the rest of the module follows."""
-    sections = [("", bag({"ef11a9": {"displayName": "Sebas"}, "ana": {"displayName": "Ana"}}, default="ef11a9"))]
+    sections = [("", bag({"7f3c02": {"displayName": "Kim"}, "ana": {"displayName": "Ana"}}, default="7f3c02"))]
     module = module_for(sections)
 
     added = module.on_pre_llm_call(session_id="s1", sender_id="ana")
     assert "Ana" in added["context"]
-    assert "Sebas" not in added["context"]
+    assert "Kim" not in added["context"]
 
 
 def test_a_gateway_with_nobody_registered_introduces_nothing():
     """A heading with nothing under it teaches a model that the section is noise."""
     module = module_for([("", bag({}))])
 
-    assert module.on_pre_llm_call(session_id="s1", sender_id="ef11a9") is None
+    assert module.on_pre_llm_call(session_id="s1", sender_id="7f3c02") is None
     assert module.on_pre_llm_call(session_id="s1", sender_id="") is None
 
 
 def test_a_person_who_wrote_nothing_is_not_introduced_as_an_empty_heading():
     module = module_for(one(displayName="", about=""))
 
-    assert module.on_pre_llm_call(session_id="s1", sender_id="ef11a9") is None
+    assert module.on_pre_llm_call(session_id="s1", sender_id="7f3c02") is None
     reads = module.runtime.reads
-    assert module.on_pre_llm_call(session_id="s1", sender_id="ef11a9") is None
+    assert module.on_pre_llm_call(session_id="s1", sender_id="7f3c02") is None
     assert module.runtime.reads == reads, "an empty section was worked out again the next turn"
 
 
@@ -335,42 +335,42 @@ def test_a_frozen_session_is_never_introduced():
     module = module_for(one())
     freeze(module)
 
-    assert module.on_pre_llm_call(session_id="s1", sender_id="ef11a9") is None
+    assert module.on_pre_llm_call(session_id="s1", sender_id="7f3c02") is None
 
 
 def test_an_edit_after_an_introduction_beats_what_was_said_in_the_chat():
     """Not what the system prompt says: on this session it says nothing at all."""
     module = module_for(one())
-    module.on_pre_llm_call(session_id="s1", sender_id="ef11a9")
+    module.on_pre_llm_call(session_id="s1", sender_id="7f3c02")
     module.runtime.edited(one(about="Wants the long version now."))
 
-    added = module.on_pre_llm_call(session_id="s1", sender_id="ef11a9")
+    added = module.on_pre_llm_call(session_id="s1", sender_id="7f3c02")
     assert added["context"].startswith(SUPERSEDES_IN_CHAT)
     assert not added["context"].startswith(SUPERSEDES)
 
 
 def test_clearing_it_after_an_introduction_is_retracted_where_it_was_said():
     module = module_for(one())
-    module.on_pre_llm_call(session_id="s1", sender_id="ef11a9")
+    module.on_pre_llm_call(session_id="s1", sender_id="7f3c02")
     module.runtime.edited([("", bag({}))])
 
-    assert module.on_pre_llm_call(session_id="s1", sender_id="ef11a9") == {"context": RETRACTED_IN_CHAT}
+    assert module.on_pre_llm_call(session_id="s1", sender_id="7f3c02") == {"context": RETRACTED_IN_CHAT}
 
 
 def test_an_introduction_costs_the_same_quiet_turn_afterwards():
     """One `stat` and no read, exactly like a session core froze."""
     module = module_for(one())
-    module.on_pre_llm_call(session_id="s1", sender_id="ef11a9")
+    module.on_pre_llm_call(session_id="s1", sender_id="7f3c02")
     reads = module.runtime.reads
 
-    assert module.on_pre_llm_call(session_id="s1", sender_id="ef11a9") is None
+    assert module.on_pre_llm_call(session_id="s1", sender_id="7f3c02") is None
     assert module.runtime.reads == reads
 
 
 def test_what_an_introduction_remembers_is_bounded_like_the_rest():
     module = module_for(one())
     for index in range(FROZEN_SESSIONS + 20):
-        module.on_pre_llm_call(session_id=f"s{index}", sender_id="ef11a9")
+        module.on_pre_llm_call(session_id=f"s{index}", sender_id="7f3c02")
 
     assert len(module.frozen) == FROZEN_SESSIONS
 
@@ -409,14 +409,14 @@ def test_the_capability_says_the_section_explains_itself():
 def test_a_file_that_moved_for_something_else_says_nothing_after_an_introduction():
     """A push registration or a heartbeat moves `profile.yaml` constantly."""
     module = module_for(one())
-    module.on_pre_llm_call(session_id="s1", sender_id="ef11a9")
+    module.on_pre_llm_call(session_id="s1", sender_id="7f3c02")
     module.runtime.touched()
 
-    assert module.on_pre_llm_call(session_id="s1", sender_id="ef11a9") is None
+    assert module.on_pre_llm_call(session_id="s1", sender_id="7f3c02") is None
 
 
 def test_the_introduction_is_bounded_like_every_other_copy():
     """Including the line in front of it, which is inside the cap, not glued on."""
     module = module_for(one(about="x" * 600), settings={"context.max_chars": 200})
 
-    assert len(module.on_pre_llm_call(session_id="s1", sender_id="ef11a9")["context"]) <= 200
+    assert len(module.on_pre_llm_call(session_id="s1", sender_id="7f3c02")["context"]) <= 200

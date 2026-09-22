@@ -261,7 +261,7 @@ def test_the_per_user_key_is_read_for_push_and_for_context(tmp_path, monkeypatch
             "u1": {
                 "v": 1,
                 "push": {"registrations": {"i1": expo_registration()}},
-                "context": {"v": 1, "users": {"u1": {"displayName": "Sebas"}}},
+                "context": {"v": 1, "users": {"u1": {"displayName": "Kim"}}},
             }
         },
     )
@@ -270,7 +270,7 @@ def test_the_per_user_key_is_read_for_push_and_for_context(tmp_path, monkeypatch
     import hermie_plugin.push as push_pkg
 
     hermie_plugin.register(ctx)
-    assert "Sebas" in ctx.sections["hermie.device"]({"session_id": "s1", "profile_name": "jurist"})
+    assert "Kim" in ctx.sections["hermie.device"]({"session_id": "s1", "profile_name": "jurist"})
 
     module = push_pkg.PushModule(hermie_plugin.Runtime(ctx, home=home))
     assert [r.user_id for r in module.section().registrations] == ["u1"]
@@ -410,7 +410,7 @@ def test_the_frozen_section_renders_the_only_registered_person(tmp_path, monkeyp
     home, ctx = gateway(
         tmp_path,
         app_meta=app_meta_with(
-            context_users={"u1": {"displayName": "Sebas", "timezone": "Europe/Amsterdam"}}
+            context_users={"u1": {"displayName": "Kim", "timezone": "Europe/Amsterdam"}}
         ),
     )
     monkeypatch.setattr(uimeta, "hermes_home", lambda: home)
@@ -419,14 +419,14 @@ def test_the_frozen_section_renders_the_only_registered_person(tmp_path, monkeyp
     rendered = ctx.sections["hermie.device"](
         {"session_id": "s1", "profile_name": "jurist", "model": "m", "provider": "p", "platform": "", "cwd": ""}
     )
-    assert "Sebas" in rendered
+    assert "Kim" in rendered
     assert "Europe/Amsterdam" in rendered
 
 
 def test_the_per_turn_path_stays_silent_for_the_person_already_in_the_prompt(tmp_path, monkeypatch):
     """The common case must cost nothing per turn."""
     home, ctx = gateway(
-        tmp_path, app_meta=app_meta_with(context_users={"u1": {"displayName": "Sebas"}})
+        tmp_path, app_meta=app_meta_with(context_users={"u1": {"displayName": "Kim"}})
     )
     monkeypatch.setattr(uimeta, "hermes_home", lambda: home)
     hermie_plugin.register(ctx)
@@ -445,13 +445,13 @@ def test_a_session_core_never_rendered_for_is_introduced_once(tmp_path, monkeypa
     next turn and not on the ones after it.
     """
     home, ctx = gateway(
-        tmp_path, app_meta=app_meta_with(context_users={"u1": {"displayName": "Sebas"}})
+        tmp_path, app_meta=app_meta_with(context_users={"u1": {"displayName": "Kim"}})
     )
     monkeypatch.setattr(uimeta, "hermes_home", lambda: home)
     hermie_plugin.register(ctx)
 
     first = ctx.fire("pre_llm_call", session_id="s1", sender_id="")[0]
-    assert "Sebas" in first["context"]
+    assert "Kim" in first["context"]
     assert "Hermie app" in first["context"], "the bot was told the facts but not where they live"
     assert ctx.fire("pre_llm_call", session_id="s1", sender_id="") == [None]
 
@@ -460,7 +460,7 @@ def test_a_second_person_on_the_same_session_gets_their_own_context(tmp_path, mo
     home, ctx = gateway(
         tmp_path,
         app_meta=app_meta_with(
-            context_users={"u1": {"displayName": "Sebas"}, "u2": {"displayName": "Ana"}}
+            context_users={"u1": {"displayName": "Kim"}, "u2": {"displayName": "Ana"}}
         ),
         settings={"context.default_user": "u1"},
     )

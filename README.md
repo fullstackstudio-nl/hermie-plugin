@@ -344,14 +344,14 @@ spot, without calling the model:
 ```
 Hermie context for jurist
 
-Talking to: Sebas
+Talking to: Kim
 Worked out: from the login the gateway admitted this session under
-Login:      self-hosted:ef11a9 → matched the registered id ef11a9
+Login:      self-hosted:7f3c02 → matched the registered id 7f3c02
 Device:     iPhone 17 Pro running iOS 27, app 1.4.0
 Dates:      Europe/Amsterdam, nl-NL
-About:      Runs FullStack Studio. Prefers short answers.
+About:      Runs Willow Studio. Prefers short answers.
 This bot:   Always cite the article number.
-From:       hermie-app:ef11a9, updated 2026-09-21 02:19 UTC
+From:       hermie-app:7f3c02, updated 2026-09-21 02:19 UTC
 ```
 
 When it says `nobody` it also says why, and what to do about it: accept the

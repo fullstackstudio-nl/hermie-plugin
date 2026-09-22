@@ -19,8 +19,8 @@ def bag(users, default=""):
 
 def user(**overrides):
     entry = {
-        "displayName": "Sebas",
-        "about": "Runs FullStack Studio. Prefers short answers.",
+        "displayName": "Kim",
+        "about": "Runs Willow Studio. Prefers short answers.",
         "device": {"model": "iPhone 17 Pro", "os": "iOS 27", "appVersion": "1.4.0"},
         "timezone": "Europe/Amsterdam",
         "locale": "nl-NL",
@@ -32,7 +32,7 @@ def user(**overrides):
 
 def test_a_good_section_reads():
     section = read_section(bag({"u1": user()}))
-    assert section.users["u1"].display_name == "Sebas"
+    assert section.users["u1"].display_name == "Kim"
     assert section.users["u1"].timezone == "Europe/Amsterdam"
 
 
@@ -46,12 +46,12 @@ def test_anything_else_reads_as_nothing():
 
 
 def test_the_sender_wins_when_the_gateway_names_one():
-    section = read_section(bag({"u1": user(displayName="Sebas"), "u2": user(displayName="Ana")}, default="u1"))
+    section = read_section(bag({"u1": user(displayName="Kim"), "u2": user(displayName="Ana")}, default="u1"))
     assert resolve(section, sender_id="u2").display_name == "Ana"
 
 
 def test_the_operator_default_beats_the_app_default():
-    section = read_section(bag({"u1": user(displayName="Sebas"), "u2": user(displayName="Ana")}, default="u1"))
+    section = read_section(bag({"u1": user(displayName="Kim"), "u2": user(displayName="Ana")}, default="u1"))
     assert resolve(section, configured_default="u2").display_name == "Ana"
 
 
@@ -79,7 +79,7 @@ def test_an_unknown_sender_never_borrows_the_only_registered_person():
     happens to be registered. With a default set the app has said who to assume
     (the test above); with no default there is nobody to assume.
     """
-    section = read_section(bag({"u1": user(displayName="Sebas")}))
+    section = read_section(bag({"u1": user(displayName="Kim")}))
 
     assert resolve(section).user_id == "u1", "a gateway that names nobody still uses the one person"
     assert resolve(section, sender_id="somebody-else") is None
@@ -87,7 +87,7 @@ def test_an_unknown_sender_never_borrows_the_only_registered_person():
 
 def test_the_rendering_names_the_person_and_the_device():
     text = render(read_section(bag({"u1": user()})).users["u1"])
-    assert "Sebas" in text
+    assert "Kim" in text
     assert "iPhone 17 Pro" in text
     assert "Europe/Amsterdam" in text
 
@@ -191,7 +191,7 @@ def test_an_essay_is_truncated_rather_than_charged_every_turn():
     text = render(section.users["u1"], max_chars=300)
     assert len(text) <= 300
     # The per-field cap bites first, so the identifying lines survive.
-    assert "Sebas" in text
+    assert "Kim" in text
 
 
 def test_fields_are_flattened_so_one_line_cannot_become_twenty():
@@ -204,7 +204,7 @@ def test_fields_are_flattened_so_one_line_cannot_become_twenty():
 
 def test_every_key_contributes_its_person():
     section = read_sections(
-        [("u1", bag({"u1": user(displayName="Sebas")})), ("u2", bag({"u2": user(displayName="Ana")}))]
+        [("u1", bag({"u1": user(displayName="Kim")})), ("u2", bag({"u2": user(displayName="Ana")}))]
     )
     assert sorted(section.users) == ["u1", "u2"]
 
@@ -213,10 +213,10 @@ def test_the_per_user_key_wins_over_the_legacy_one():
     section = read_sections(
         [
             ("", bag({"u1": user(displayName="Stale"), "u2": user(displayName="Ana")})),
-            ("u1", bag({"u1": user(displayName="Sebas")})),
+            ("u1", bag({"u1": user(displayName="Kim")})),
         ]
     )
-    assert section.users["u1"].display_name == "Sebas"
+    assert section.users["u1"].display_name == "Kim"
     # And the person who has not moved yet is still there.
     assert section.users["u2"].display_name == "Ana"
 
@@ -224,7 +224,7 @@ def test_the_per_user_key_wins_over_the_legacy_one():
 def test_a_stranger_in_somebody_elses_key_never_beats_their_own():
     section = read_sections(
         [
-            ("u1", bag({"u1": user(displayName="Sebas"), "u2": user(displayName="Copied")})),
+            ("u1", bag({"u1": user(displayName="Kim"), "u2": user(displayName="Copied")})),
             ("u2", bag({"u2": user(displayName="Ana")})),
         ]
     )
@@ -254,8 +254,8 @@ def test_per_user_keys_that_disagree_name_no_default():
 
 
 def test_a_self_hosted_login_finds_the_bare_id_the_app_registered():
-    section = read_section(bag({"ef11a9": user(displayName="Sebas"), "ana": user(displayName="Ana")}))
-    assert resolve(section, sender_id="self-hosted:ef11a9").display_name == "Sebas"
+    section = read_section(bag({"7f3c02": user(displayName="Kim"), "ana": user(displayName="Ana")}))
+    assert resolve(section, sender_id="self-hosted:7f3c02").display_name == "Kim"
 
 
 def test_a_basic_login_finds_the_bare_name():
@@ -286,20 +286,20 @@ def test_a_url_shaped_subject_is_never_split_at_its_scheme():
 
 def test_a_url_shaped_subject_matches_itself_whole():
     section = read_section(
-        bag({"https://accounts.example.com/12345": user(displayName="Sebas"), "ana": user(displayName="Ana")})
+        bag({"https://accounts.example.com/12345": user(displayName="Kim"), "ana": user(displayName="Ana")})
     )
-    assert resolve(section, sender_id="https://accounts.example.com/12345").display_name == "Sebas"
+    assert resolve(section, sender_id="https://accounts.example.com/12345").display_name == "Kim"
 
 
 def test_the_provider_comes_off_a_url_subject_but_the_scheme_stays_on():
     section = read_section(
-        bag({"https://accounts.example.com/12345": user(displayName="Sebas"), "ana": user(displayName="Ana")})
+        bag({"https://accounts.example.com/12345": user(displayName="Kim"), "ana": user(displayName="Ana")})
     )
-    assert resolve(section, sender_id="oidc:https://accounts.example.com/12345").display_name == "Sebas"
+    assert resolve(section, sender_id="oidc:https://accounts.example.com/12345").display_name == "Kim"
 
 
 def test_a_prefixed_sender_never_borrows_a_different_persons_entry():
-    section = read_section(bag({"ef11a9": user(displayName="Sebas"), "ana": user(displayName="Ana")}))
+    section = read_section(bag({"7f3c02": user(displayName="Kim"), "ana": user(displayName="Ana")}))
     assert resolve(section, sender_id="self-hosted:9999") is None
 
 
@@ -317,13 +317,13 @@ def test_a_bare_sender_that_fits_two_logins_names_nobody():
 
 def test_an_unknown_prefixed_sender_still_falls_back_to_the_default():
     section = read_section(
-        bag({"ef11a9": user(displayName="Sebas"), "ana": user(displayName="Ana")}, default="ef11a9")
+        bag({"7f3c02": user(displayName="Kim"), "ana": user(displayName="Ana")}, default="7f3c02")
     )
-    assert resolve(section, sender_id="oidc:9999").display_name == "Sebas"
+    assert resolve(section, sender_id="oidc:9999").display_name == "Kim"
 
 
 def test_the_prefix_is_only_read_off_something_shaped_like_one():
-    assert same_user("self-hosted:ef11a9", "ef11a9")
+    assert same_user("self-hosted:7f3c02", "7f3c02")
     assert same_user("max", "basic:max")
     assert not same_user("https://host/12345", "//host/12345")
     assert not same_user("oidc:max", "basic:max")
