@@ -90,10 +90,13 @@ from .render import (
     PROVIDER_PREFIX,
     ContextSection,
     Orientation,
+    UserContext,
+    attribution,
     read_sections,
     render,
     resolve,
     same_user,
+    split_provider,
 )
 from . import me as me_command
 from .live_session import LiveSessions, dashboard_providers
@@ -153,6 +156,22 @@ class Frozen:
     stamp: Tuple[int, int]
     introduced: bool = False
     sender: str = ""
+
+
+def _why_refused(named: str, runtime_id: str) -> str:
+    """Why `stand_in_test` would not let a claim stand in, in a few words.
+
+    Said for the log and shaped by what a person can act on. The two real
+    causes are a turn that is not a dashboard turn at all — nothing named a
+    sender and no runtime id is bound, so nobody claimed it — and a sender
+    spelled by a provider the dashboard does not sign people in with, which is
+    a messaging platform's user or a bot and is a sender Hermes named
+    correctly. Only the provider half of the login is named; see `log_claim`.
+    """
+    if not named:
+        return "no sender was named and no runtime id is bound" if not runtime_id else "the turn declined it"
+    prefix = split_provider(named)[0]
+    return f"the sender's provider is {prefix}" if prefix else "the sender carries no provider"
 
 
 class ContextModule:
@@ -301,10 +320,64 @@ class ContextModule:
         """
         runtime_id, durable = self.turn_ids(session_id)
         accept = self.stand_in_test(named, runtime_id, session_id)
-        if take:
-            return self.claims.take_if(runtime_id, durable, accept)
-        claimed = self.claims.peek(runtime_id, durable)
-        return claimed if claimed and accept(claimed) else ""
+        if not take:
+            claimed = self.claims.peek(runtime_id, durable)
+            return claimed if claimed and accept(claimed) else ""
+
+        # The store calls the test only where it found a claim for this turn,
+        # and under its own lock, so recording that here tells the three
+        # outcomes apart — spent, refused, none — without asking the store a
+        # second question it cannot answer atomically anyway. The test itself is
+        # untouched; this only watches it, which is why the store's shape does
+        # not change and the two copies of the plugin go on sharing one.
+        found: List[str] = []
+
+        def watched(claimed: str) -> bool:
+            found.append(claimed)
+            return accept(claimed)
+
+        taken = self.claims.take_if(runtime_id, durable, watched)
+        self.log_claim(taken, bool(found), runtime_id, named)
+        return taken
+
+    @staticmethod
+    def log_claim(taken: str, found: bool, runtime_id: str, named: str) -> None:
+        """What became of this turn's claim. Every line starts `hermie: turn claim`.
+
+        Nothing said whether a claim was spent, refused or never found, so a
+        gateway where the feature had quietly stopped working looked exactly
+        like one where nobody had claimed anything — which is the worst shape a
+        fault can take in a feature whose job is to be invisible.
+
+        Three outcomes, two levels, chosen by how often each one happens on a
+        gateway nobody is debugging. **Spent** and **refused** are both rare:
+        one claim is made per turn by one client, and a refusal means a claim
+        was made for a turn it may not stand in for, which somebody wants to
+        see. Both are `info`. **No claim at all** is the ordinary turn on every
+        gateway whose app does not claim — which is every turn that does not
+        come from Hermie — so it is `debug` and stays out of a busy log.
+
+        Ids the gateway minted, and nothing else. The session this turn runs on,
+        and the provider half of a login (`oidc`, `basic`); never the user half,
+        never a name, and nothing from the message — a log line is read by
+        people who are not the person who typed.
+        """
+        where = runtime_id or "no runtime id"
+        if taken:
+            logger.info(
+                "hermie: turn claim spent for session %s (provider %s)",
+                where,
+                split_provider(taken)[0] or "none",
+            )
+            return
+        if found:
+            logger.info(
+                "hermie: turn claim refused for session %s; it may not stand in for this turn (%s)",
+                where,
+                _why_refused(named, runtime_id),
+            )
+            return
+        logger.debug("hermie: turn claim absent for session %s", where)
 
     def discard_claim(self, session_id: str = "") -> None:
         """Spend this session's claim without using it, where it can be found.
@@ -318,7 +391,11 @@ class ContextModule:
         the session for a command.
         """
         runtime_id, durable = self.turn_ids(session_id)
-        self.claims.take(runtime_id, durable)
+        if self.claims.take(runtime_id, durable):
+            logger.info(
+                "hermie: turn claim discarded for session %s; the plugin answered without a model turn",
+                runtime_id or "no runtime id",
+            )
 
     def sender_with_source(
         self, named: str = "", session_id: str = "", *, take: bool = False
@@ -465,22 +542,27 @@ class ContextModule:
             # next turn. The other order would swallow it for the session.
             stamp = self.runtime.app_stamp()
             section = self.section()
-            sender_id = self.sender(session_id=str(session_info.get("session_id") or ""))
-            user = resolve(
+            sender_id, source = self.sender_with_source(
+                session_id=str(session_info.get("session_id") or "")
+            )
+            user, rung, _by_sender = attribution(
                 section,
                 sender_id=sender_id,
+                sender_source=source,
                 configured_default=self.configured_default,
             )
-            text = render(user, bot=bot, max_chars=self.max_chars, orientation=self.orientation)
+            # Two renderings of one person: the one this session is told, which
+            # says whether the gateway checked who is sending, and the one it
+            # is remembered by, which does not. `top_up` says why they differ.
             if user is not None:
                 self.remember(
                     str(session_info.get("session_id") or ""),
                     user.user_id,
-                    text,
+                    self.rendered(user, bot=bot),
                     stamp,
                     sender=sender_id,
                 )
-            return text
+            return self.rendered(user, rung, sender_id, bot=bot)
         except Exception as exc:
             # A raising section callable costs core the whole plugin-section
             # block, so this one never raises.
@@ -540,6 +622,39 @@ class ContextModule:
             replace=bool(bound),
         )
 
+    def rendered(
+        self,
+        user: Optional[UserContext],
+        rung: str = "",
+        sender_id: str = "",
+        lead: str = "",
+        bot: str = "",
+    ) -> str:
+        """`render`, with everything this gateway settles rather than the caller.
+
+        Three of the arguments are the same on every path — the bot, the cap,
+        the orientation this gateway can stand behind — and the two that are
+        not are the pair that must travel together: the rung that named the
+        person and the login they were named by. Passing them through one door
+        is what keeps a path from quietly rendering without them, which reads
+        as "could not confirm" and would be a lie on a verified turn.
+
+        **Called with neither, it renders the person and nothing about the
+        turn**, which is the copy this module compares and remembers. See
+        `top_up`: who the gateway checked is a fact about a turn, and a record
+        of what a chat has been told about a PERSON must not move when it
+        changes.
+        """
+        return render(
+            user,
+            bot=bot or self.runtime.bot_name(),
+            max_chars=self.max_chars,
+            lead=lead,
+            orientation=self.orientation,
+            source=rung,
+            login=sender_id,
+        )
+
     # -- the per-turn top-up -------------------------------------------------
 
     def covers(self, frozen: Frozen, sender_id: str) -> bool:
@@ -565,6 +680,7 @@ class ContextModule:
         sender_id: str,
         section_of: Callable[[], ContextSection],
         changed_sender: bool = False,
+        source: str = "",
     ) -> Optional[Dict[str, str]]:
         """Say what this chat's copy no longer says, in one of two situations.
 
@@ -588,15 +704,29 @@ class ContextModule:
         Everything after that is one piece of work, because the four endings are
         the same four either way: nothing to say, a newer copy, a first copy, and
         a copy withdrawn.
+
+        **What is compared is the person, never the turn.** The copy this chat
+        is remembered by is rendered without the sentence saying whether the
+        gateway checked who is sending, and the copy it is SENT carries it. They
+        have to be separated, because that sentence is the one part of the
+        section that legitimately differs between two turns of one chat: the
+        prompt is built where no sender may be reachable and a turn arrives with
+        one, a turn carries a claim and the next does not. Comparing the two
+        would read every such swing as the person having edited their profile —
+        and then say so, in a note that begins "The person has changed this",
+        about somebody who changed nothing.
         """
         stamp = self.runtime.app_stamp()
         if not changed_sender and stamp == frozen.stamp:
             return None
 
-        user = resolve(section_of(), sender_id=sender_id, configured_default=self.configured_default)
-        text = render(
-            user, bot=self.runtime.bot_name(), max_chars=self.max_chars, orientation=self.orientation
+        user, rung, _by_sender = attribution(
+            section_of(),
+            sender_id=sender_id,
+            sender_source=source,
+            configured_default=self.configured_default,
         )
+        text = self.rendered(user)
         # Whom the record now describes. On an edit a person who has stopped
         # resolving is kept — they are still the one in the chat, and the
         # retraction below is about them. On a change of sender nobody is kept:
@@ -622,13 +752,7 @@ class ContextModule:
             # time, and claiming otherwise points a model at nothing. Where the
             # older copy sits decides the rest of the sentence: one said in the
             # chat was never in the system prompt at all.
-            return {"context": render(
-                user,
-                bot=self.runtime.bot_name(),
-                max_chars=self.max_chars,
-                lead=self.beaten(frozen, changed_sender),
-                orientation=self.orientation,
-            )}
+            return {"context": self.rendered(user, rung, sender_id, lead=self.beaten(frozen, changed_sender))}
         if not frozen.text:
             # Nothing was said and nothing is there now. Nothing to retract.
             return None
@@ -660,7 +784,11 @@ class ContextModule:
     # -- a chat that began before any of this --------------------------------
 
     def introduce(
-        self, session_id: str, sender_id: str, section_of: Callable[[], ContextSection]
+        self,
+        session_id: str,
+        sender_id: str,
+        section_of: Callable[[], ContextSection],
+        source: str = "",
     ) -> Optional[Dict[str, str]]:
         """A session whose system prompt was built without this section at all.
 
@@ -687,10 +815,13 @@ class ContextModule:
         """
         # Before the read, for the reason `render_section` gives.
         stamp = self.runtime.app_stamp()
-        user = resolve(section_of(), sender_id=sender_id, configured_default=self.configured_default)
-        text = render(
-            user, bot=self.runtime.bot_name(), max_chars=self.max_chars, orientation=self.orientation
+        user, rung, _by_sender = attribution(
+            section_of(),
+            sender_id=sender_id,
+            sender_source=source,
+            configured_default=self.configured_default,
         )
+        text = self.rendered(user)
         # The plain text is what this chat now knows, so a later top-up compares
         # like with like; the lead line belongs to this one turn only. The sender
         # goes in beside it: an introduction that said nothing because the app
@@ -701,13 +832,7 @@ class ContextModule:
         )
         if not text:
             return None
-        return {"context": render(
-            user,
-            bot=self.runtime.bot_name(),
-            max_chars=self.max_chars,
-            lead=INTRODUCED,
-            orientation=self.orientation,
-        )}
+        return {"context": self.rendered(user, rung, sender_id, lead=INTRODUCED)}
 
     def on_pre_llm_call(self, **kwargs: Any) -> Optional[Dict[str, str]]:
         """Contribute context the chat's own copy does not already carry.
@@ -725,7 +850,7 @@ class ContextModule:
         try:
             session_id = str(kwargs.get("session_id") or "")
             # The claim, if there is one, is spent here: one claim, one turn.
-            sender_id, _source = self.sender_with_source(
+            sender_id, source = self.sender_with_source(
                 str(kwargs.get("sender_id") or ""), session_id, take=True
             )
             # One read of the app's metadata per turn at most, shared by the
@@ -744,7 +869,7 @@ class ContextModule:
                 # Nothing was ever frozen for this session and nothing ever
                 # will be. See `introduce`: this is the long-running chat that
                 # predates the plugin, and it fires once.
-                return self.introduce(session_id, sender_id, section_of)
+                return self.introduce(session_id, sender_id, section_of, source)
 
             # Both endings are the same work, told apart by what has changed:
             # the app's metadata under the person this chat already knows, or the
@@ -756,6 +881,7 @@ class ContextModule:
                 sender_id,
                 section_of,
                 changed_sender=not self.covers(frozen, sender_id),
+                source=source,
             )
         except Exception as exc:
             logger.warning("hermie: could not add per-sender context: %s", exc)

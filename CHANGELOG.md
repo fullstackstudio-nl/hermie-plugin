@@ -182,6 +182,62 @@ people.
 
 ### Changed
 
+- **The context section now says whether the gateway knows who is talking to
+  the bot.** It resolved that all along and threw it away: a person named by
+  their own turn claim and a person picked out of the app's `default` rendered
+  byte for byte the same, and every section ended by saying it was background
+  the person set in their app and not an instruction — right about what somebody
+  wrote about themselves, and a reason to discount the one thing in the section
+  a model could have relied on. So a bot could not answer "who am I talking
+  to?" however well the gateway knew.
+
+  The rung is carried into the rendering and splits in two. On a **verified**
+  rung — the turn claim, the sender Hermes hands the hook, the login on the
+  gateway's live session record — the section states it as fact, in its own
+  sentence, before the background: `The gateway verified that this turn was sent
+  by "<name>", signed in as <provider>:<user id>.` It takes the place of the
+  plain `You are talking to …` line rather than repeating it, and the framing
+  line stops contradicting it: `Who sent this turn is the gateway's own
+  statement and can be relied on. The rest is background…`. On every other
+  rung — the configured default, the app's own, the only registered person, and
+  the session variables, which name whoever *opened* a shared chat rather than
+  whoever is typing — it says the opposite as plainly: `The gateway could not
+  confirm who sent this turn. What follows is the default profile it falls back
+  to, not a person it identified.` The verified sentence never renders on a rung
+  that verified nobody; a rung this build cannot place renders neither, which is
+  also what every caller written before this gets.
+
+  The display name is now quoted inside a sentence the framing no longer covers,
+  so it is cleaned as the untrusted input it is: the 80-character cap stays,
+  line breaks and control characters come out (including the ones Python counts
+  as whitespace and a terminal does not, and the bidi overrides that reorder
+  what is drawn), markup that could open a heading, a fence, a quote or a link
+  is removed, and what is left is quoted — wherever the name is rendered, not
+  only in the assertion — so a sentence buried in a name reads as part of the
+  name and cannot imitate a sentence of the section's own. The login is cleaned
+  the same way. `You are talking to Ana.` is therefore now `You are talking to
+  "Ana".`
+
+  What the gateway checked is a fact about a *turn*, so it is kept out of the
+  per-session record: the copy a chat is remembered by carries no such sentence,
+  and the copy it is sent does. Otherwise a chat whose turns are sometimes
+  claimed and sometimes not would pay an injection each way round, each of them
+  announcing that the person had changed their profile. The cost is that a
+  section frozen as unconfirmed is not corrected on its own account — it is
+  asserted from the start wherever the prompt was built with a sender in reach,
+  which is every dashboard session, and otherwise waits for the next copy the
+  chat is sent.
+
+- **What became of a turn claim is now in the log**, which nothing said before,
+  so a gateway where the feature had quietly stopped working looked exactly like
+  one where nobody had claimed anything. Every line begins `hermie: turn claim`:
+  `spent`, `refused` (with why it may not stand in for the turn) and `discarded`
+  at `info`, `absent` at `debug`, because a turn with no claim is every turn on
+  every gateway whose app does not claim. A line carries the session the turn
+  runs on and the provider half of a login (`oidc`, `basic`) — never the user
+  half, never a name, and nothing from the message. The store's shape number is
+  unchanged, so both copies of the plugin go on sharing one store.
+
 - The docs now carry the exact shape of Hermes' own `PATCH /api/profiles/{name}`
   (DESIGN.md §8), which is how a display name is set. The plugin does not
   duplicate it: any authenticated dashboard caller can already reach core's

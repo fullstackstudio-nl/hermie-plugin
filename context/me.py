@@ -32,7 +32,7 @@ from .render import (
     BY_SESSION_VARS,
     ContextSection,
     UserContext,
-    resolve_with_reason,
+    attribution,
 )
 
 logger = logging.getLogger(__name__)
@@ -145,15 +145,18 @@ def answer(module: Any, raw_args: str = "") -> Optional[str]:
         bot = module.runtime.bot_name()
         section = module.section()
         sender_id, source = module.sender_with_source()
-        user, reason = resolve_with_reason(
-            section, sender_id=sender_id, configured_default=module.configured_default
+        # One definition of "which rung named this person", shared with the
+        # section that asserts or disclaims on it: a report that disagreed with
+        # the prompt about that would be worse than no report.
+        user, rung, by_sender = attribution(
+            section,
+            sender_id=sender_id,
+            sender_source=source,
+            configured_default=module.configured_default,
         )
-        # The sender rung reports *where* the sender came from, which is the
-        # part a person debugging this actually needs.
-        rung = source if (user is not None and reason == BY_HOOK and source) else reason
         lines = [f"Hermie context for {bot}", ""]
         lines += (
-            _person(section, user, rung, sender_id, bot, reason == BY_HOOK)
+            _person(section, user, rung, sender_id, bot, by_sender)
             if user is not None
             else _nobody(section, sender_id)
         )

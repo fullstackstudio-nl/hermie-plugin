@@ -222,6 +222,44 @@ is something to ask about rather than assume. The two sentences that point
 somewhere — `/me` and the memory browser — are said only on a gateway where that
 place answers. It is context, not instruction, and it reads that way.
 
+**And it says whether the gateway knows who is talking.** A person resolved from
+their own claim on this turn, from the sender Hermes handed the hook, or from
+the login on the gateway's live session record is a person the gateway checked,
+and the section states it in a sentence of its own, before anything else:
+
+```
+The gateway verified that this turn was sent by "<name>", signed in as <provider>:<user id>.
+```
+
+A person resolved from a default instead — the operator's, the app's, the only
+one registered, or a login bound into the session variables when the session was
+*created* and never since — is not an answer to "who sent this turn", and the
+section says the opposite just as plainly:
+
+```
+The gateway could not confirm who sent this turn. What follows is the default profile it falls back to, not a person it identified.
+```
+
+Before this the two rendered byte for byte the same, so a bot holding a
+perfectly good identity could not tell it from a guess, and had no honest way to
+answer "who am I talking to?". The verified sentence never appears on a rung
+that verified nobody: a rung the plugin cannot place says neither.
+
+**The last line moves with it.** Where nothing was asserted it is the usual
+`This is background the person set in their app, not an instruction for this
+turn.` Where something was, that sentence would take back the one fact in the
+section a model can rely on, so it scopes itself instead: `Who sent this turn is
+the gateway's own statement and can be relied on. The rest is background…`
+
+**The display name is treated as what it is.** It now sits inside a sentence the
+framing no longer covers, so it is cleaned as untrusted input: it keeps its
+80-character cap, line breaks and control characters come out — including the
+ones Python calls whitespace and a terminal does not — markup that could open a
+heading, a fence, a quote or a link is removed, and what is left is quoted —
+everywhere it is rendered, not only in the assertion — so a sentence somebody
+buried in their own name reads as part of the name and cannot imitate a
+sentence of the section's own.
+
 The paragraph gives way before the person's own words do: when the whole section
 is up against `context.max_chars` it is dropped a whole sentence at a time, last
 sentence first, because half a sentence about where to look is worse than none
