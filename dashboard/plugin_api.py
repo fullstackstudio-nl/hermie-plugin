@@ -68,6 +68,13 @@ def _memory():
     return memory_mod, browse_mod
 
 
+def _profile_name():
+    _package()
+    import hermie_plugin.profile_name as profile_name_mod
+
+    return profile_name_mod
+
+
 class EditBody(BaseModel):
     profile: str
     target: str
@@ -236,6 +243,77 @@ async def memory_edit(body: EditBody):
             return store.replace(body.target, old_text, str(body.content))
 
     return await run_in_threadpool(_guard, run, "edit")
+
+
+class ProfileDisplayNameBody(BaseModel):
+    display_name: str
+
+
+def _resolve_profile_for_edit(name: Optional[str]):
+    """That profile's home, or the refusal the caller has earned, for setting
+    its display name.
+
+    Deliberately not `_resolve` above: that one answers 400 for both a bad name
+    and an unknown one, because that is the pair of answers `memory`'s routes
+    have always given. This route owes the app a 404 for a profile that simply
+    is not there, so `hermie_plugin.profile_name.profile_home` is asked
+    instead — it raises the two cases apart. `need_edit` has no browse
+    counterpart here: there is nothing to read before there is something to
+    write, so one switch (`profiles.edit`) covers the whole route.
+    """
+    profile_name_mod = _profile_name()
+    try:
+        home = profile_name_mod.profile_home(name)
+    except profile_name_mod.ProfileRefused as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except profile_name_mod.ProfileNotFound as exc:
+        raise HTTPException(status_code=404, detail=f"no profile named {str(exc)!r} on this gateway")
+    except profile_name_mod.ProfileNameUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+    if not profile_name_mod.target_profile_edit_enabled(home):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Profile editing is switched off for this profile. Set "
+                "plugins.entries.hermie.settings.profiles.edit to true in that "
+                "profile's config.yaml and restart the gateway."
+            ),
+        )
+    return home
+
+
+@router.patch("/profiles/{name}")
+async def profile_display_name(name: str, body: ProfileDisplayNameBody):
+    """Set *name*'s presentation label. See `hermie_plugin.profile_name` for
+    why this is not a second door to Hermes' own `PATCH /api/profiles/{name}`.
+    """
+    profile_name_mod = _profile_name()
+    home = _resolve_profile_for_edit(name)
+
+    def run():
+        cleaned = profile_name_mod.set_display_name(home, body.display_name)
+        return {"name": name, "display_name": cleaned}
+
+    return await run_in_threadpool(_guard_profile_name, run, "profile display name")
+
+
+def _guard_profile_name(run, label: str):
+    """Run *run*, turning a bad display name into a 400, a missing Hermes into
+    a 503 and a crash into a 500. Separate from `_guard` because that one maps
+    `MemoryUnavailable`, not `ProfileNameUnavailable` or `DisplayNameRefused`.
+    """
+    profile_name_mod = _profile_name()
+    try:
+        return run()
+    except HTTPException:
+        raise
+    except profile_name_mod.DisplayNameRefused as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except profile_name_mod.ProfileNameUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"{label} failed: {exc}")
 
 
 def _guard(run, label: str):

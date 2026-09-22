@@ -144,6 +144,7 @@ def test_loading_publishes_an_advert_the_app_can_read(tmp_path, monkeypatch):
     assert contract.CAP_PUSH_SEEN_PER_CHAT in caps
     assert contract.CAP_UIMETA_PER_USER in caps
     assert contract.CAP_CONTEXT_ORIENTATION in caps
+    assert contract.CAP_PROFILE_DISPLAY_NAME in caps
     assert advert["version"] == contract.PLUGIN_VERSION
     assert advert["modules"]["push"] == "on"
     assert advert["modules"]["presence"] == "planned"
@@ -204,6 +205,19 @@ def test_a_switched_off_module_claims_nothing(tmp_path, monkeypatch):
     # Reading the per-user key is the plugin's, not the push module's.
     assert contract.CAP_UIMETA_PER_USER in caps
     assert "post_llm_call" not in ctx.hooks
+
+
+def test_switching_off_profile_editing_takes_only_that_capability(tmp_path, monkeypatch):
+    """Not a `modules.*` switch: there is no `modules.profiles` and none is
+    needed, since there is no hook or prompt section to skip loading."""
+    home, ctx = gateway(tmp_path, app_meta=app_meta_with(), settings={"profiles.edit": False})
+    monkeypatch.setattr(uimeta, "hermes_home", lambda: home)
+
+    hermie_plugin.register(ctx)
+
+    caps = contract.read_capabilities(uimeta.read_key(uimeta.PLUGIN_KEY, home))
+    assert contract.CAP_PROFILE_DISPLAY_NAME not in caps
+    assert contract.CAP_PUSH_EXPO in caps
 
 
 def test_the_advert_never_touches_the_app_key(tmp_path, monkeypatch):

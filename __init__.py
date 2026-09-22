@@ -186,6 +186,14 @@ def register(ctx: Any) -> None:
     # are switched on, and the app has to know that before it moves its bag.
     capabilities: List[str] = [contract.CAP_UIMETA_PER_USER]
 
+    # Not gated behind `states`: like `update.check` below, setting a display
+    # name has one switch of its own (`profiles.edit`) and no on/off "module"
+    # around it, because there is no hook or system-prompt section to load or
+    # skip — only a route the dashboard always mounts.
+    from . import profile_name as profile_name_module
+
+    capabilities.extend(profile_name_module.register(ctx, runtime).capabilities())
+
     if states.get("push") == "on":
         from . import push as push_module
 

@@ -8,6 +8,18 @@ people.
 
 ### Added
 
+- `profiles.display_name` — the app can rename a bot's profile label from its
+  own settings screen. `PATCH /api/plugins/hermie/profiles/{name}` with
+  `{"display_name": "…"}` writes only that key, in that profile's own
+  `profile.yaml`, through the same `write_profile_meta` Hermes' own
+  `PATCH /api/profiles/{name}` calls for the `default` profile — never the
+  canonical id, the directory or anything a real rename would move, so it works
+  the same way on every profile rather than only on `default`. Refused with 400
+  for a name that is empty after trimming, longer than 60 characters or
+  carrying a control character; 404 for a profile this gateway does not have;
+  403 per profile via the new `profiles.edit` setting, off means read-only the
+  same way `memory.edit` does.
+
 - `memory.raw` — **a backend can be read as it is stored.** The three browsing
   routes all answer a memory the store has already parsed into entries, which is
   the shape to edit it in and the wrong shape for the question "what is in

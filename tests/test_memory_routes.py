@@ -208,6 +208,7 @@ def test_the_mounted_routes_are_the_ones_that_were_asked_for(routes):
         ("/memory/graph", ("GET",)),
         ("/memory/raw", ("GET",)),
         ("/memory/edit", ("POST",)),
+        ("/profiles/{name}", ("PATCH",)),
     }
 
 

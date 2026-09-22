@@ -409,6 +409,40 @@ plugins:
           edit: false    # read-only; browsing still works
 ```
 
+## Profile display name
+
+| | |
+|---|---|
+| `PATCH /api/plugins/hermie/profiles/{name}` | `{"display_name": "…"}` → `{"name": "<profile>", "display_name": "<text>"}` |
+
+Also on the dashboard's plugin router, for the same reason `memory` is: Hermes
+already has `PATCH /api/profiles/{name}`, but that route *renames* a profile —
+directory, wrapper script, service — and only turns into a display name at all
+for `default`, whose home is the installation root and so cannot be renamed.
+This route is that special case made general: it writes just the presentation
+label, on any profile, through the very function core's own route calls for
+`default` (`hermes_cli.profiles.write_profile_meta`), and never the canonical
+id, the directory or anything else in the profile.
+
+- **400** — the name is empty once trimmed, over 60 characters, or carries a
+  control character.
+- **403** — `profiles.edit` is off for *that* profile (see below).
+- **404** — no such profile on this gateway. Not the 400 `memory`'s routes give
+  a bad profile: those fold "not a valid name" and "not one that exists" into
+  one answer, and this route owes the app the two apart, so a caller can tell a
+  typo from a profile that simply is not there.
+
+Switch it off per profile:
+
+```yaml
+plugins:
+  entries:
+    hermie:
+      settings:
+        profiles:
+          edit: false   # the route refuses with 403; read-only
+```
+
 ## Updating
 
 ```

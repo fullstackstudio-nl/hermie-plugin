@@ -154,11 +154,12 @@ CAP_CONTEXT_LIVE = "context.live"
 # keep telling people to spell it out, which is the truth on that gateway.
 CAP_CONTEXT_ORIENTATION = "context.orientation"
 CAP_COMMAND_ME = "command.me"
-# The memory browser. These are the only capabilities naming an HTTP surface
-# rather than something reachable over the connection the app already has, and
-# they say so: the routes are mounted by the dashboard, on the dashboard's port,
-# under the dashboard's own all-or-nothing auth. An app that sees them still has
-# to know the dashboard address and hold a dashboard credential.
+# The memory browser and the profile-display-name route. These are the only
+# capabilities naming an HTTP surface rather than something reachable over the
+# connection the app already has, and they say so: the routes are mounted by
+# the dashboard, on the dashboard's port, under the dashboard's own
+# all-or-nothing auth. An app that sees them still has to know the dashboard
+# address and hold a dashboard credential.
 CAP_MEMORY_BROWSE = "memory.browse"
 CAP_MEMORY_EDIT = "memory.edit"
 # A backend can be read as it is STORED, which the browsing routes cannot do:
@@ -169,6 +170,11 @@ CAP_MEMORY_EDIT = "memory.edit"
 # because a plugin without the route answers 404 and an app should be able to
 # know that before it draws a tab for it.
 CAP_MEMORY_RAW = "memory.raw"
+# Setting a profile's display name over `PATCH /api/plugins/hermie/profiles/
+# {name}`. A different route from memory's, but the same category of
+# capability, for the same reason: it names an HTTP surface, not a WebSocket
+# method, so an app has to know it is even there before it can rely on it.
+CAP_PROFILE_DISPLAY_NAME = "profiles.display_name"
 # The gateway was asked to find out whether a newer plugin exists, and the
 # advert carries the answer. Advertised only when the operator switched the
 # check on: the string says an answer is there, not that one could be.

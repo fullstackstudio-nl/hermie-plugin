@@ -69,6 +69,13 @@ config_schema:
     description: >-
       Let that caller add, replace and remove entries as well. Has no effect
       while memory.browse is off.
+  profiles.edit:
+    type: bool
+    default: true
+    description: >-
+      Let a signed-in dashboard caller set a profile's display name through
+      /api/plugins/hermie/profiles/{name} — the presentation label only, never
+      the profile's canonical id, its directory or any other file.
   push.types:
     type: list
     default: ["message", "request", "cron", "cron_done", "cron_failed", "turn_done", "turn_failed"]
