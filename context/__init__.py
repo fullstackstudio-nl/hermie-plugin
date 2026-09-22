@@ -372,12 +372,15 @@ class ContextModule:
     def claimed_sender(self, named: str = "", session_id: str = "", *, take: bool = False) -> str:
         """The person who claimed this turn from the app, or nothing.
 
-        `take` spends the claim, and only the turn itself does that. Building
-        the prompt looks without spending, so the turn that follows still finds
-        it. A claim that may not stand in for the hook's sender is left where it
-        is, unspent: the turn it was made for has not run yet. Judging and
-        spending are one step in the store (`take_if`), so the claim spent is
-        always the claim that was judged.
+        `take` spends the claim, and only the turn itself does that
+        (`on_pre_llm_call`, and `/me`'s best-effort discard). Building the
+        prompt (`render_section`) does not call this at all any more — it
+        passes `consult_claim=False` to `sender_with_source` and never reaches
+        here, so a claim is never looked at, spent or not, before the turn it
+        was made for has run. A claim that may not stand in for the hook's
+        sender is left where it is, unspent, when this IS called with
+        `take=True`. Judging and spending are one step in the store
+        (`take_if`), so the claim spent is always the claim that was judged.
         """
         runtime_id, durable = self.turn_ids(session_id)
         accept = self.stand_in_test(named, runtime_id, session_id)
@@ -515,10 +518,6 @@ class ContextModule:
         if found:
             return found, BY_SESSION_VARS
         return "", ""
-
-    def sender(self, named: str = "", session_id: str = "") -> str:
-        """Who is asking, by the same order, when the rung does not matter."""
-        return self.sender_with_source(named, session_id)[0]
 
     @property
     def configured_default(self) -> str:

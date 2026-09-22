@@ -82,15 +82,19 @@ SENDER_RUNGS = (BY_CLAIM, BY_HOOK, BY_PLATFORM, BY_LIVE_SESSION, BY_SESSION_VARS
 # yet — `VERIFIED_RUNGS` is empty until it does, and `asserted_sender` in
 # `__init__.py` answers `""` for every rung there is.
 #
-# `BY_CLAIM` sits in `UNCONFIRMED_RUNGS` alongside every rung that names the
-# opener, rather than in neither list, because until the claim is bound to the
-# submit it is exactly as unproven as they are — an authenticated request is
-# not nothing, but it is not what this repo's own reviews asked it to be
-# either, so it gets the same caution rather than a lighter one. `BY_PLATFORM`
-# is the one rung that sits in neither: a messaging platform names its own
-# sender per message, which is Hermes' business and something this plugin's
-# claim mechanism neither confirms nor doubts, so it produces no caution and no
-# assertion.
+# `BY_CLAIM` and `BY_PLATFORM` both sit in neither list today, and for the same
+# underlying reason even though it reads differently for each. `BY_PLATFORM`
+# is permanent: a messaging platform names its own sender per message, which is
+# Hermes' business and something this plugin's claim mechanism neither confirms
+# nor doubts, so it produces no caution and no assertion regardless of what
+# lands later. `BY_CLAIM` is provisional: an authenticated claim is not nothing
+# — it is closer to proof than a rung that merely names whoever opened the
+# session — but it is not yet bound to the submit it was made for either, so it
+# gets neither the assertion (correctly withdrawn) nor the fallback caution
+# (which exists for a rung this module has active reason to doubt, and a claim
+# is not that). It moves into `VERIFIED_RUNGS` once bound to `sha256` of the
+# exact prompt text; nothing about it moves into `UNCONFIRMED_RUNGS` in the
+# meantime.
 #
 # Every other rung names the person who OPENED the session, on every turn of
 # it. That is not a hedge, it is this repo's own finding (DESIGN.md, "A shared
@@ -104,11 +108,10 @@ SENDER_RUNGS = (BY_CLAIM, BY_HOOK, BY_PLATFORM, BY_LIVE_SESSION, BY_SESSION_VARS
 #
 # The two lists are disjoint, `VERIFIED_RUNGS` is the closed one, and a rung
 # this module does not know about — the empty one a caller that has not been
-# told passes included, and `BY_PLATFORM` beside it — is in neither. Every
-# direction fails towards silence.
+# told passes included, and `BY_CLAIM` and `BY_PLATFORM` beside it — is in
+# neither. Every direction fails towards silence.
 VERIFIED_RUNGS = ()
 UNCONFIRMED_RUNGS = (
-    BY_CLAIM,
     BY_HOOK,
     BY_LIVE_SESSION,
     BY_SESSION_VARS,
@@ -744,4 +747,25 @@ def render(
         if len(text) <= max_chars or not said:
             break
         said = said[:-1]
-    return text if len(text) <= max_chars else text[: max_chars - 1].rstrip() + "…"
+    if len(text) <= max_chars:
+        return text
+
+    # Dropping every orientation sentence was not enough: the caution, the
+    # person's own words and the framing do not all fit even then (a long
+    # "about" beside a long per-bot note, on a tight cap). A blind truncation
+    # of the whole joined string cuts from the END, which is exactly how the
+    # framing went missing here and the person's own prose became the last
+    # thing in the prompt — the framing is what tells a model to read
+    # everything above it as background rather than instruction, so it must
+    # survive at least as reliably as the caution does. The budget for it is
+    # therefore reserved first, the ellipsis lands inside `lines` instead
+    # (`said` is already empty at this point), and the framing is appended
+    # afterwards, whole and untouched. What gives way inside `lines` is
+    # whatever sits last there — the per-bot note, then the "about" text —
+    # because the caution and the identifying lines are inserted at the front.
+    reserved = len(framing) + 1  # the newline joining it to what precedes it
+    budget = max(max_chars - reserved, 0)
+    body = "\n".join(lines)
+    if len(body) > budget:
+        body = body[: budget - 1].rstrip() + "…" if budget > 0 else ""
+    return f"{body}\n{framing}" if body else framing

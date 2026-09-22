@@ -351,11 +351,14 @@ async def context_turn(request: Request):
     signed in is not enough. Hermes hands every authenticated dashboard caller
     every route with nothing to check an owner against, so without this a
     signed-in user who learned somebody else's runtime session id could claim
-    that session's next turn — and what a claim now buys is a sentence telling
-    the model the gateway VERIFIED who sent it. So the login on the record is
-    compared with the login on the request, across the provider prefix, and a
-    record admitted under nobody authorises nobody: there is nothing to check
-    against, and a claim that cannot be checked is refused rather than trusted.
+    that session's next turn — and put their own profile in front of it. (A
+    spent claim asserting, in a sentence, that the gateway VERIFIED who sent
+    the turn is what this route was meant to also buy; that assertion is
+    currently withdrawn — see CHANGELOG.md — but this check does not wait on
+    whether it is live.) So the login on the record is compared with the login
+    on the request, across the provider prefix, and a record admitted under
+    nobody authorises nobody: there is nothing to check against, and a claim
+    that cannot be checked is refused rather than trusted.
     """
     turn_claim, live_session, same_user = _turn_claim()
     content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()

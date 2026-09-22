@@ -119,8 +119,13 @@ def test_a_rung_that_did_not_confirm_the_sender_says_so(rung):
     assert "may be somebody else" in text
 
 
-@pytest.mark.parametrize("rung", VERIFIED_RUNGS)
+@pytest.mark.parametrize("rung", VERIFIED_RUNGS or (BY_CLAIM,))
 def test_a_rung_that_did_confirm_the_sender_does_not_caution(rung):
+    """`VERIFIED_RUNGS` is empty today, so this pins the property against
+    `BY_CLAIM` instead of asserting nothing: a claim is in neither list right
+    now, not the cautioned one, and that has to keep holding once it moves
+    into `VERIFIED_RUNGS` in Task 2 — a rung this property is checked against
+    must never caution, whichever list currently contains it."""
     assert not cautions(render(person(), source=rung))
 
 
@@ -140,23 +145,42 @@ def test_a_rung_this_build_cannot_place_says_nothing(rung):
 
 def test_the_two_lists_do_not_overlap():
     assert not set(VERIFIED_RUNGS) & set(UNCONFIRMED_RUNGS)
-    # `BY_PLATFORM` is the one rung the split leaves out on purpose (D2 of the
-    # plan): a messaging platform names its own sender per message, which is
-    # Hermes' business and neither confirmed nor doubted by this plugin's own
-    # claim mechanism, so it produces no caution and no assertion.
-    assert set(VERIFIED_RUNGS) | set(UNCONFIRMED_RUNGS) | {BY_NOBODY, BY_PLATFORM} == set(EVERY_RUNG)
+    # `BY_CLAIM` and `BY_PLATFORM` are the two rungs the split leaves out on
+    # purpose today. `BY_PLATFORM` permanently: a messaging platform names its
+    # own sender per message, which is Hermes' business and neither confirmed
+    # nor doubted by this plugin's own claim mechanism. `BY_CLAIM`
+    # provisionally: an authenticated claim is closer to proof than a rung this
+    # module has active reason to doubt, but not yet bound to the submit it was
+    # made for, so it gets neither the withdrawn assertion nor a caution it has
+    # not earned either way. Both produce no caution and no assertion.
+    assert set(VERIFIED_RUNGS) | set(UNCONFIRMED_RUNGS) | {BY_NOBODY, BY_CLAIM, BY_PLATFORM} == set(EVERY_RUNG)
 
 
-def test_by_platform_is_neither_verified_nor_cautioned():
-    """A hook sender the dashboard did not admit is real (DESIGN.md) but this
-    plugin's own claim mechanism has nothing to say about it either way, so it
-    must produce neither `SENDER_VERIFIED` nor `PROFILE_UNCONFIRMED`."""
-    text = render(person(), source=BY_PLATFORM)
+@pytest.mark.parametrize("rung", (BY_CLAIM, BY_PLATFORM))
+def test_by_claim_and_by_platform_are_neither_verified_nor_cautioned(rung):
+    """Neither rung is in `VERIFIED_RUNGS` (no assertion) or `UNCONFIRMED_RUNGS`
+    (no caution) today — `BY_PLATFORM` because Hermes already named that sender
+    correctly and this plugin has nothing to add either way, `BY_CLAIM` because
+    an authenticated-but-not-yet-text-bound claim is neither proven nor a rung
+    with active reason to be doubted."""
+    text = render(person(), source=rung)
 
-    assert BY_PLATFORM not in VERIFIED_RUNGS
-    assert BY_PLATFORM not in UNCONFIRMED_RUNGS
+    assert rung not in VERIFIED_RUNGS
+    assert rung not in UNCONFIRMED_RUNGS
     assert not asserts_the_sender(text)
     assert not cautions(text)
+
+
+@pytest.mark.parametrize("rung", EVERY_RUNG + ("", "something this build does not know"))
+def test_asserted_sender_answers_nothing_for_every_rung_there_is(rung):
+    """The task's literal requirement, checked directly rather than only
+    through `render` (which never emits `SENDER_VERIFIED` regardless of rung —
+    that sentence is `ContextModule.asserted_sender`'s to produce, on the
+    per-turn path, not `render`'s). `VERIFIED_RUNGS` is empty, so this holds
+    for a rung this build has never heard of too, not only for the nine named
+    ones.
+    """
+    assert ContextModule.asserted_sender(rung, LOGIN) == ""
 
 
 def test_the_rungs_that_name_the_opener_are_not_verified():
@@ -180,6 +204,22 @@ def test_the_framing_line_does_not_pass_the_caution_off_as_the_persons_own():
     assert text.endswith(FRAMING_GATEWAY)
     assert not text.endswith(FRAMING)
     assert "comes from the gateway" in text
+
+
+def test_the_framing_survives_truncation_the_way_the_caution_does():
+    """Regression: a long profile must not have the hard cap eat the closing
+    framing line while leaving the person's own prose as the last thing in the
+    prompt. Reproduced at a realistic cap — a ~400-character "about" beside a
+    400-character per-bot note, cautioned, at the default `max_chars` of 1200
+    — where dropping every orientation sentence still is not enough room.
+    """
+    entry = person(about="x" * 400, perBot={"a-bot": "y" * 400})
+    text = render(entry, source=BY_APP_DEFAULT, bot="a-bot", max_chars=1200)
+
+    assert len(text) <= 1200
+    assert cautions(text)
+    assert text.endswith(FRAMING_GATEWAY), "the framing was cut off by the hard truncation"
+    assert "y" * 400 not in text, "nothing was actually dropped for space"
 
 
 @pytest.mark.parametrize("rung", EVERY_RUNG + ("",))
@@ -319,11 +359,12 @@ def test_a_sender_with_no_rung_reports_no_rung():
     assert rung not in VERIFIED_RUNGS and rung not in UNCONFIRMED_RUNGS
 
 
-@pytest.mark.parametrize("rung", VERIFIED_RUNGS)
+@pytest.mark.parametrize("rung", VERIFIED_RUNGS or (BY_CLAIM,))
 def test_a_verified_sender_the_app_has_no_row_for_never_lends_its_rung(rung):
     """The gateway checked somebody the app has never heard of, so a default
     answers — and reporting the SENDER's rung would present that default as
-    checked."""
+    checked. `VERIFIED_RUNGS` is empty today; pinned against `BY_CLAIM` so the
+    property is not asserting nothing while the list is empty."""
     found = section_of({"u1": {"displayName": "Ana"}}, default="u1")
 
     user, reported, by_sender = attribution(found, sender_id="oidc:a-stranger", sender_source=rung)
@@ -387,9 +428,9 @@ class FakeSessionContext:
         return variable.value if variable is not None else default
 
 
-def module_for(sections, hermes=None, claims=None, providers=("oidc",)):
+def module_for(sections, hermes=None, claims=None, providers=("oidc",), settings=None):
     return ContextModule(
-        FakeRuntime(sections),
+        FakeRuntime(sections, settings),
         session_vars=SessionVars(hermes),
         live_sessions=LiveSessions(types.ModuleType("absent")),
         claims=claims if claims is not None else TurnClaims(),
@@ -470,6 +511,9 @@ def test_a_claimed_turn_is_resolved_for_the_claimer_without_asserting_anything()
     """A claim still changes whose profile a turn carries — that half of the
     feature is untouched — but nothing today may say the gateway checked it
     (`VERIFIED_RUNGS` is empty; see "Decision (2026-09-22)" in DESIGN.md).
+    `BY_CLAIM` is in neither list, so the switch itself is not cautioned either
+    — a caution is for a rung this module has active reason to doubt, and an
+    authenticated claim is not that, even before it is bound to the submit.
     """
     claims = TurnClaims()
     module = module_for(two_people(), FakeSessionContext(**{UI_SESSION_ID: SID, USER_ID: OPENER}), claims)
@@ -482,7 +526,7 @@ def test_a_claimed_turn_is_resolved_for_the_claimer_without_asserting_anything()
     assert not asserts_the_sender(frozen)
     assert added is not None
     assert "Ana" in added["context"] and "Bo" not in added["context"]
-    assert cautions(added["context"]), "an unproven claim was rendered as if it were confirmed"
+    assert not cautions(added["context"])
     assert not asserts_the_sender(added["context"])
 
 
@@ -498,9 +542,16 @@ def test_the_frozen_section_ignores_a_claim_that_exists_when_it_is_built():
     claim had ever been made — and stay that way for the life of the session,
     whatever the per-turn path later resolves.
     """
+    # context.session_vars is off so the one thing this test is not about —
+    # the shim that rewrites HERMES_SESSION_USER_ID for the resolved sender of
+    # each turn — cannot also move what the second render below reads back out
+    # of the session variables.
     claims = TurnClaims()
     module = module_for(
-        two_people(), FakeSessionContext(**{UI_SESSION_ID: SID, USER_ID: OPENER}), claims
+        two_people(),
+        FakeSessionContext(**{UI_SESSION_ID: SID, USER_ID: OPENER}),
+        claims,
+        settings={"context.session_vars": False},
     )
     claims.claim(SID, LOGIN)  # Ana's claim, sitting in the store before the prompt exists
 
@@ -511,10 +562,15 @@ def test_the_frozen_section_ignores_a_claim_that_exists_when_it_is_built():
     assert not asserts_the_sender(frozen)
 
     # A different person (Ana, by way of the claim) actually sends the next
-    # turn. That is the per-turn path's business; it changes nothing about the
-    # bytes core already persisted for the session and will go on replaying.
+    # turn. That is the per-turn path's business; it must change nothing about
+    # what `render_section` would produce for this session — checked by
+    # rendering it again, rather than by re-asserting on the same local string,
+    # since a real gateway persists and replays the first render and never
+    # calls this a second time for one session.
     module.on_pre_llm_call(session_id="durable-1", sender_id="")
-    assert cautions(frozen) and "Bo" in frozen
+    replayed = freeze(module)
+
+    assert replayed == frozen, "the per-turn path changed what the frozen section would render"
 
 
 def test_the_frozen_section_does_not_outlive_the_turn_it_was_built_for():
@@ -589,6 +645,9 @@ def test_beside_places_an_assertion_after_the_copy_when_there_is_one():
 
 
 def test_nothing_is_appended_after_a_claimed_turns_copy_today():
+    """`BY_CLAIM` is in neither list, so this copy carries no caution and ends
+    with the plain framing line, not the gateway one — and, either way,
+    nothing today is ever appended after it."""
     claims = TurnClaims()
     module = module_for(two_people(), FakeSessionContext(**{UI_SESSION_ID: SID}), claims)
     freeze(module)
@@ -597,7 +656,9 @@ def test_nothing_is_appended_after_a_claimed_turns_copy_today():
     added = module.on_pre_llm_call(session_id="durable-1", sender_id=OPENER)
 
     assert added is not None
-    assert added["context"].endswith(FRAMING_GATEWAY)
+    assert added["context"].endswith(FRAMING)
+    assert not added["context"].endswith(FRAMING_GATEWAY)
+    assert not cautions(added["context"])
     assert not asserts_the_sender(added["context"])
     assert "Ana" in added["context"] and "Bo" not in added["context"]
 

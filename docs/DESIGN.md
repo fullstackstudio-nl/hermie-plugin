@@ -933,9 +933,10 @@ and `pre_llm_call` asks for a claim before it asks anything else
   The test is worked out before the store's lock is taken and applied under
   it, so the claim that is spent is always the claim that was judged.
 - **One claim, one model turn, 30 seconds.** `pre_llm_call` spends the claim it
-  uses. Building the prompt looks at it without spending it, so a prompt built
-  for this turn already describes the claimer and the hook then has nothing to
-  add. A claim nothing spent is ignored and dropped 30 seconds after it was
+  uses. Building the prompt (`render_section`) does not look at the store at
+  all — see "Saying whether the gateway checked who is sending" for why — so
+  the claim is still there, unspent, when the turn it was made for actually
+  runs. A claim nothing spent is ignored and dropped 30 seconds after it was
   made: the app claims immediately before it submits, so a claim is normally
   spent within a second or two, and the window is kept as short as a slow
   network allows because an unspent claim is the whole of the exposure below.

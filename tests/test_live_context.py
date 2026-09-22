@@ -148,12 +148,20 @@ def test_the_bot_note_for_this_chat_changes_too():
 
 
 def test_the_superseding_copy_is_bounded_like_every_other_one():
-    """The lead line is inside the cap, not glued on outside it."""
-    module = module_for(one(about="x" * 600), settings={"context.max_chars": 120})
+    """The lead line is inside the cap, not glued on outside it.
+
+    200, not a tighter cap: the framing is now reserved room ahead of the
+    person's own words rather than being cut off with them (render.py), so a
+    cap too tight to reach past the fixed "What they told you about
+    themselves: " prefix would truncate the "x" and "y" versions identically
+    and hide the edit from `covers`'s comparison — a real risk at an
+    unrealistically tight cap, not the thing this test is about.
+    """
+    module = module_for(one(about="x" * 600), settings={"context.max_chars": 200})
     freeze(module)
     module.runtime.edited(one(about="y" * 600))
 
-    assert len(module.on_pre_llm_call(session_id="s1", sender_id="7f3c02")["context"]) <= 120
+    assert len(module.on_pre_llm_call(session_id="s1", sender_id="7f3c02")["context"]) <= 200
 
 
 # -- and costs nothing on every other turn -----------------------------------

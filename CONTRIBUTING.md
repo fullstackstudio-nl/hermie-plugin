@@ -9,12 +9,20 @@ python -m pytest --rootdir=tests tests
 The memory-route tests in `tests/test_memory_routes.py` need FastAPI, and a few
 elsewhere need Hermes itself. They **skip** rather than fail when those are
 absent, so a clean run on a bare checkout is not a full run. `python
--m pytest --rootdir=tests tests -q` prints the skip count; if it is not `0`,
-that is what it is telling you:
+-m pytest --rootdir=tests tests -q` prints the skip count; on a bare checkout
+with neither dependency it is `3`, not `0` — that is expected, not a sign
+something is broken:
 
 ```
-pip install fastapi httpx     # runs the route tests
+pip install fastapi httpx     # runs the FastAPI-gated route tests
 ```
+
+installs the one dependency this repo's own `pip` can supply. It does not
+touch the tests that skip because Hermes itself is not importable here (`hermes
+is not importable here`, `needs Hermes itself`) — those only run inside a real
+Hermes checkout (see "Validating against a real Hermes" below), and a skip
+count higher than `3` after installing FastAPI is the only shape worth
+investigating.
 
 FastAPI is a *Hermes runtime* dependency, not one of this plugin's —
 `python_dependencies` in the manifest is empty and stays empty. The routes only

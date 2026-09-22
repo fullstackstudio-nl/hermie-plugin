@@ -43,8 +43,12 @@ people.
   replaces a hook sender only when that sender is spelled as a dashboard login,
   so a messaging platform's user or a bot is never overridden, and it stands in
   for an empty sender only on a turn with a runtime id bound. Building the
-  prompt reads a claim without spending it; `/me` names it as the rung that
-  answered and spends it where it can find it. The app claims for a
+  prompt (`render_section`) never reads the claim store at all — a claim
+  answers for a submit, and the section renders before any turn of the session
+  has run, so a claim sitting there at that moment was never evidence about
+  that particular render; only `pre_llm_call`, firing for the actual turn,
+  spends one. `/me` names the claim as the rung that answered where it can
+  find one, and spends it too. The app claims for a
   `prompt.submit` that starts a model turn and never for a slash command, which
   is what keeps a claim from outliving its turn. The hooks and the dashboard
   run separate copies of the package, and the store is shared between them by
