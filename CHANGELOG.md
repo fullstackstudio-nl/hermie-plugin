@@ -177,3 +177,21 @@ people.
   frozen and, when the rendered text has actually changed, sends the new copy
   saying it replaces the frozen one. A cleared context is retracted in words.
   On a turn where nothing changed this costs one `stat` and no read.
+
+### Fixed
+
+- **A shared Bot Chat describes the person sending the turn, not the one who
+  opened it.** The session variables are bound once, when a session is created,
+  and were asked before the gateway's live session record; on a chat opened by a
+  login the app has no row for, every later turn resolved to that login, found
+  nothing and said nothing — while Hermes' own "User:" line went on naming the
+  opener. A sender is now worked out per turn from the hook, then the live
+  record, then the session variables, then the section's `default`. When that
+  person is not the one the chat was told about, the next turn carries them
+  once, with a line saying somebody else is sending this turn; a record that
+  described nobody no longer stands in the way, and the first person who does
+  resolve is introduced. A sender without a row gets nothing about anybody, and
+  "the only registered person" answers only where the gateway named nobody at
+  all. With `context.session_vars` on, `HERMES_SESSION_USER_*` is rewritten for
+  the resolved sender when it names somebody else, so "User:" agrees with the
+  section.

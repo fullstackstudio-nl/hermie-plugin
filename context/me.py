@@ -46,8 +46,8 @@ ABOUT_CHARS = 240
 # One sentence per rung of the resolution order.
 RUNGS = {
     BY_HOOK: "the sender Hermes handed the hook",
-    BY_SESSION_VARS: "the login bound into this session's variables",
     BY_LIVE_SESSION: "the login the gateway admitted this session under",
+    BY_SESSION_VARS: "the login bound into this session's variables",
     BY_CONFIGURED: "the configured default (context.default_user)",
     BY_APP_DEFAULT: "the default the app set",
     BY_ONLY_USER: "the only person registered on this gateway",

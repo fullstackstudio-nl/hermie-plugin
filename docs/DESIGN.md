@@ -761,7 +761,7 @@ effect in your next chat", which is a sentence no app should have to write.
 The same constraint has a second half, and it is the older one. A session whose
 prompt was built before the plugin was installed — or before it had a section —
 has no frozen copy at all, and core will not build that prompt again for the
-life of the session. `refresh` cannot help: it tops up a copy, and there is
+life of the session. `top_up` cannot help: it tops up a copy, and there is
 none. A Bot Chat that has been open for weeks would stay the one place where the
 person is a stranger, however carefully the app filled the profile in.
 
@@ -788,18 +788,42 @@ introduced session the prompt says nothing at all.
 
 ### Resolution order
 
-The sender the hook was handed → the sender bound into the session variables →
-the login on the gateway's live session record → the operator's
+The sender the hook was handed → the login on the gateway's live session record
+→ the sender bound into the session variables → the operator's
 `context.default_user` → the app's own `default` → the only registered person,
-if there is exactly one. With several registered people and no way to tell who
-is asking, **nothing is injected**: showing a bot the wrong person's notes is
-worse than showing it none.
+if there is exactly one **and the gateway named nobody**. With several
+registered people and no way to tell who is asking, or with a sender the app has
+no row for and no default naming anyone, **nothing is injected**: showing a bot
+the wrong person's notes is worse than showing it none.
 
-The first three are one question asked in three places, and a gateway that
-answers more than one answers the same thing in each. They are ordered by what
-they cost and by how direct they are: a field handed to us, then a variable
-lookup, then a read of somebody else's table. None of them is reached while a
-cheaper one answers.
+The first three are one question asked in three places, ordered by how recent
+the answer is. The session variables are bound once, when a session is created,
+and go on naming whoever opened it for as long as it lives; a Bot Chat is
+shared, so on a later turn that may well be somebody who is no longer typing.
+The live record is the one the turn runs on, so it is asked first. Nothing
+further down is reached while a rung above answers.
+
+The "only registered person" rung is a guess, where the two defaults are
+somebody's statement about who to assume. A guess never answers for a gateway
+that did name somebody: a login the app has no row for is a person the app knows
+nothing about, and handing them the one registered person's notes is how one
+person's profile reaches another.
+
+### A shared chat
+
+The section frozen into the prompt describes whoever the session started under.
+Each turn is resolved again, and the record kept per session remembers both the
+person the chat was last told about and the sender that was worked out for, so a
+turn from the same sender costs one `stat` and nothing else. When the sender
+changes, the next turn carries the new person once, with a line saying that
+somebody else is sending this turn and that this replaces what the chat was told
+about who that is — worded for where the older copy sits, as every other note
+is. A sender the app has no row for gets nothing about anybody; if the chat had
+been told about somebody else, that is withdrawn in one line, once.
+
+A record that describes nobody — the chat was opened by a login without a row —
+does not stand in the way: the first turn from somebody who does resolve is
+introduced, with the same line a chat that predates the plugin gets.
 
 ### The dashboard names nobody to a hook, so the plugin asks the dashboard
 
@@ -874,10 +898,17 @@ So `pre_llm_call` fills in `HERMES_SESSION_USER_ID`, `_ID_ALT` and `_NAME` for
 that call, under `context.session_vars` (on by default). Four rules keep it a
 shim rather than a policy:
 
-1. **Nothing is overwritten.** If `HERMES_SESSION_USER_ID` already holds a
-   value, the shim writes nothing at all; each of the three is written only
-   when it is itself empty. The day Hermes fills them on this path, this
-   becomes a no-op that nobody has to come back and remove.
+1. **Nothing right is overwritten.** If `HERMES_SESSION_USER_ID` already names
+   the person sending this turn — in either spelling of the id — the shim writes
+   nothing at all, and where nothing is bound each of the three is written only
+   when it is itself empty. The one exception is a bound login that names
+   somebody ELSE, which on a shared chat is whoever opened it: then all three
+   are rewritten for the resolved sender, the name and alternative id included
+   (emptied when the app has no row for them), because that is the line Hermes
+   puts in front of the model as "User:" and it would otherwise contradict the
+   context section. A turn that names nobody leaves a bound login alone. The
+   day Hermes fills them in per turn, this becomes a no-op that nobody has to
+   come back and remove.
 2. **The id may be the gateway's, the name may not be.** The sender — handed
    to the hook, or read off the gateway's own session record — is a fact and
    is used as-is, provider prefix and all. The display name and the
@@ -901,7 +932,8 @@ discarded with that context, so under the default timeout the write never
 reaches the turn. With `plugins.hook_callback_timeout: 0` the callback runs on
 the caller's own thread and the write lands where the rest of the turn reads it.
 The shim is built to be harmless either way — every gate above it is free, and
-the metadata read happens only once the variables are known to be empty.
+the metadata read happens only once the variables are known not to name the
+sender already.
 
 ### `/me`
 
@@ -912,8 +944,8 @@ checking whether their identity reached the gateway should not pay for a turn
 to find out.
 
 It resolves exactly what a turn resolves and reports it: the person, **which
-rung answered** (the hook's sender, the session variables, the live session
-record, the configured default, the app's own, the only registered person, or
+rung answered** (the hook's sender, the live session record, the session
+variables, the configured default, the app's own, the only registered person, or
 nobody), the login id and the registered id it matched, the device line,
 timezone and locale, the "about" text, this bot's own note, and which of the
 app's ui_meta keys the entry came from with when it was written.

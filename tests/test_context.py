@@ -71,6 +71,20 @@ def test_an_unknown_sender_falls_back_rather_than_inventing():
     assert resolve(section, sender_id="nobody").user_id == "u1"
 
 
+def test_an_unknown_sender_never_borrows_the_only_registered_person():
+    """A default is somebody's decision; "the only one here" is a guess.
+
+    The field case this comes from is a shared chat: the gateway named a login
+    the app has never seen, and the answer must not be the notes of whoever else
+    happens to be registered. With a default set the app has said who to assume
+    (the test above); with no default there is nobody to assume.
+    """
+    section = read_section(bag({"u1": user(displayName="Sebas")}))
+
+    assert resolve(section).user_id == "u1", "a gateway that names nobody still uses the one person"
+    assert resolve(section, sender_id="somebody-else") is None
+
+
 def test_the_rendering_names_the_person_and_the_device():
     text = render(read_section(bag({"u1": user()})).users["u1"])
     assert "Sebas" in text

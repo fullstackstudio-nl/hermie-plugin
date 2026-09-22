@@ -4,7 +4,13 @@ import types
 
 from hermie_plugin.context import ContextModule
 from hermie_plugin.context.live_session import GATEWAY_MODULE, LiveSessions
-from hermie_plugin.context.render import read_section
+from hermie_plugin.context.render import (
+    INTRODUCED,
+    RETRACTED_BY_SENDER,
+    SUPERSEDES_BY_SENDER,
+    SUPERSEDES_BY_SENDER_IN_CHAT,
+    read_section,
+)
 from hermie_plugin.context.session_vars import (
     SESSION_NAMES,
     UI_SESSION_ID,
@@ -111,13 +117,57 @@ def test_the_variables_are_filled_when_they_are_empty():
     assert hermes.snapshot() == {USER_ID: "u1", USER_ID_ALT: "alt-1", USER_NAME: "Sebas"}
 
 
-def test_a_gateway_that_already_knows_is_left_alone():
-    """The shim exists for a gap; it goes quiet the day the gap closes."""
-    hermes = FakeSessionContext(**{USER_ID: "oidc:sebas"})
+def test_a_gateway_that_already_names_this_person_is_left_alone():
+    """The shim exists for a gap; it goes quiet the day the gap closes.
+
+    Including when the gateway spells the id with the provider that issued the
+    login while the app registered the bare one: that is one person, so there is
+    nothing to correct and nothing to read.
+    """
+    hermes = FakeSessionContext(**{USER_ID: "oidc:u1"})
     module = module_for([("u1", bag({"u1": {"displayName": "Sebas"}}))], hermes)
 
     assert module.fill_session_vars("u1", module.section) == {}
-    assert hermes.snapshot() == {USER_ID: "oidc:sebas"}
+    assert hermes.snapshot() == {USER_ID: "oidc:u1"}
+    assert module.runtime.reads == 0, "agreement was settled without reading the profile"
+
+
+def test_a_variable_naming_somebody_else_is_put_right():
+    """The field case: a shared chat, and Hermes\' own "User:" line was wrong.
+
+    A session variable is bound when the session is created and names whoever
+    opened it. On a turn from somebody else that value is not a value to keep —
+    it is the line the model reads as "User:", contradicting the context section
+    out loud, which is exactly what the bot in the report went by.
+    """
+    hermes = FakeSessionContext(**{USER_ID: "u2", USER_NAME: "Ana"})
+    module = module_for(
+        [("", bag({"u1": {"displayName": "Sebas", "userIdAlt": "alt-1"}, "u2": {"displayName": "Ana"}}))],
+        hermes,
+    )
+
+    assert module.fill_session_vars("u1", module.section) == {
+        USER_ID: "u1", USER_ID_ALT: "alt-1", USER_NAME: "Sebas",
+    }
+    assert hermes.snapshot() == {USER_ID: "u1", USER_ID_ALT: "alt-1", USER_NAME: "Sebas"}
+
+
+def test_a_name_belonging_to_the_previous_person_does_not_survive_the_correction():
+    """Nothing is known about the sender, so nothing may be said about them."""
+    hermes = FakeSessionContext(**{USER_ID: "u2", USER_NAME: "Ana"})
+    module = module_for([("", bag({"u2": {"displayName": "Ana"}}))], hermes)
+
+    assert module.fill_session_vars("u1", module.section) == {USER_ID: "u1", USER_NAME: ""}
+    assert hermes.snapshot() == {USER_ID: "u1"}
+
+
+def test_nothing_is_rewritten_while_the_gateway_names_nobody_for_this_turn():
+    """A bound login beats nothing at all; there is no better answer to give."""
+    hermes = FakeSessionContext(**{USER_ID: "u2", USER_NAME: "Ana"})
+    module = module_for([("", bag({"u1": {"displayName": "Sebas"}}, default="u1"))], hermes)
+
+    assert module.fill_session_vars("", module.section) == {}
+    assert hermes.snapshot() == {USER_ID: "u2", USER_NAME: "Ana"}
 
 
 def test_a_variable_that_already_has_a_value_keeps_it():
@@ -306,9 +356,24 @@ def test_the_id_may_come_from_the_session_variables_rather_than_the_hook():
     assert "Sebas" in module.on_pre_llm_call(session_id="", sender_id="")["context"]
 
 
-def test_the_session_variable_beats_the_live_record():
+def test_the_live_record_beats_the_session_variable():
+    """The record is per connection; the variable is per session, and older.
+
+    A session variable is bound when the session is created and is never rebound,
+    so on a chat several people share it names whoever opened it. The gateway
+    stamped the login of the connection THIS turn arrived on, which is the
+    question being asked.
+    """
     hermes = FakeSessionContext(**{USER_ID: "ana"})
     module = module_for(two_logins(), hermes, gateway=fake_gateway("self-hosted:ef11a9"))
+
+    assert "Sebas" in module.on_pre_llm_call(session_id="key-1", sender_id="")["context"]
+
+
+def test_the_session_variable_is_still_asked_where_no_record_answers():
+    """A gateway whose table this plugin cannot read has nothing else to go on."""
+    hermes = FakeSessionContext(**{USER_ID: "ana"})
+    module = module_for(two_logins(), hermes, gateway=fake_gateway(None))
 
     assert "Ana" in module.on_pre_llm_call(session_id="key-1", sender_id="")["context"]
 
@@ -348,3 +413,141 @@ def test_the_live_login_is_what_hermes_is_told_this_turn():
     assert hermes.snapshot()[USER_ID] == "self-hosted:ef11a9"
     assert hermes.snapshot()[USER_NAME] == "Sebas"
     assert hermes.snapshot()[USER_ID_ALT] == "alt-1"
+
+
+# -- a shared chat -----------------------------------------------------------
+#
+# One session, several people. Whoever opened it is bound into the session
+# variables for the life of the session; the person typing now is whoever the
+# turn itself names. Every test below is about the second of those winning.
+
+OPENER = "basic:opener"
+SENDER = "oidc:sender-sub"
+
+
+def shared_gateway():
+    """Two people with their own rows, and a login that opened the chat with none.
+
+    Each per-user bag names its own person as the default, the way the app
+    writes them, so the two disagree and the section has no default at all.
+    """
+    return [
+        ("sender-sub", bag({"sender-sub": {"displayName": "Sam", "userIdAlt": "alt-s"}}, default="sender-sub")),
+        ("other", bag({"other": {"displayName": "Olga"}}, default="other")),
+    ]
+
+
+def start(module, session_id="s1"):
+    return module.render_section({"session_id": session_id, "profile_name": "jurist"})
+
+
+def test_the_field_case_the_person_sending_is_described_not_the_one_who_opened():
+    """The report: the opener has no row, the sender has one, the bot knew neither.
+
+    The session variables name the login that opened the chat. The turn names
+    somebody else, somebody the app does have a row for. The bot must be told
+    about that person, and Hermes' own "User:" line must agree with it.
+    """
+    hermes = FakeSessionContext(**{USER_ID: OPENER})
+    module = module_for(shared_gateway(), hermes)
+
+    assert start(module) == "", "the opener has no row and nobody is the default"
+
+    added = module.on_pre_llm_call(session_id="s1", sender_id=SENDER)
+    assert added is not None, "the person sending the turn never reached the bot"
+    assert added["context"].startswith(INTRODUCED)
+    assert "Sam" in added["context"] and "Olga" not in added["context"]
+    assert hermes.snapshot()[USER_ID] == SENDER
+    assert hermes.snapshot()[USER_NAME] == "Sam"
+    assert hermes.snapshot()[USER_ID_ALT] == "alt-s"
+
+
+def test_the_field_case_after_the_opener_has_already_had_a_turn():
+    """The opener typed first and was told nothing. That must not stand in the way."""
+    hermes = FakeSessionContext(**{USER_ID: OPENER})
+    module = module_for(shared_gateway(), hermes)
+    start(module)
+
+    assert module.on_pre_llm_call(session_id="s1", sender_id=OPENER) is None
+
+    added = module.on_pre_llm_call(session_id="s1", sender_id=SENDER)
+    assert added is not None and added["context"].startswith(INTRODUCED)
+    assert "Sam" in added["context"]
+    assert module.on_pre_llm_call(session_id="s1", sender_id=SENDER) is None, "said on every turn"
+
+
+def test_the_field_case_when_only_the_live_record_names_the_sender():
+    """The hook names nobody; the session variables still name the opener.
+
+    The record of the connection this turn arrived on is asked before the
+    variables bound when the session was created.
+    """
+    hermes = FakeSessionContext(**{USER_ID: OPENER})
+    module = module_for(shared_gateway(), hermes, gateway=fake_gateway(SENDER))
+
+    added = module.on_pre_llm_call(session_id="key-1", sender_id="")
+    assert added is not None and "Sam" in added["context"]
+    assert hermes.snapshot()[USER_ID] == SENDER
+
+
+def test_a_change_of_sender_supersedes_once_and_not_on_every_turn():
+    hermes = FakeSessionContext(**{USER_ID: "other"})
+    module = module_for(shared_gateway(), hermes, settings={"context.session_vars": False})
+    assert "Olga" in start(module)
+
+    first = module.on_pre_llm_call(session_id="s1", sender_id=SENDER)
+    assert first is not None and first["context"].startswith(SUPERSEDES_BY_SENDER)
+    assert "Sam" in first["context"] and "Olga" not in first["context"]
+    assert module.on_pre_llm_call(session_id="s1", sender_id=SENDER) is None
+    assert module.on_pre_llm_call(session_id="s1", sender_id=SENDER) is None
+
+    back = module.on_pre_llm_call(session_id="s1", sender_id="other")
+    assert back is not None, "the person who opened the chat was left described as the other one"
+    assert back["context"].startswith(SUPERSEDES_BY_SENDER_IN_CHAT)
+    assert "Olga" in back["context"] and "Sam" not in back["context"]
+    assert module.on_pre_llm_call(session_id="s1", sender_id="other") is None
+
+
+def test_an_empty_record_is_introduced_once_somebody_resolves():
+    """Nobody resolved when the chat began; the first person who does is introduced."""
+    hermes = FakeSessionContext()
+    module = module_for(shared_gateway(), hermes)
+    assert start(module) == ""
+    assert module.on_pre_llm_call(session_id="s1", sender_id="") is None
+
+    added = module.on_pre_llm_call(session_id="s1", sender_id=SENDER)
+    assert added is not None and added["context"].startswith(INTRODUCED)
+    assert module.on_pre_llm_call(session_id="s1", sender_id=SENDER) is None
+
+
+def test_the_variables_follow_the_sender_from_turn_to_turn():
+    hermes = FakeSessionContext(**{USER_ID: OPENER})
+    module = module_for(shared_gateway(), hermes)
+
+    module.on_pre_llm_call(session_id="s1", sender_id=SENDER)
+    assert hermes.snapshot() == {USER_ID: SENDER, USER_ID_ALT: "alt-s", USER_NAME: "Sam"}
+
+    module.on_pre_llm_call(session_id="s1", sender_id="other")
+    assert hermes.snapshot() == {USER_ID: "other", USER_NAME: "Olga"}
+
+
+def test_a_sender_without_a_row_and_no_default_is_shown_nobody_elses():
+    """One registered person and no default: a stranger still gets nothing of theirs."""
+    hermes = FakeSessionContext(**{USER_ID: OPENER})
+    module = module_for([("", bag({"sender-sub": {"displayName": "Sam", "about": "Private."}}))], hermes)
+
+    assert start(module) == ""
+    assert module.on_pre_llm_call(session_id="s1", sender_id=OPENER) is None
+    assert module.on_pre_llm_call(session_id="s1", sender_id=OPENER) is None
+    assert hermes.snapshot() == {USER_ID: OPENER}
+
+
+def test_a_stranger_after_somebody_described_withdraws_that_description_once():
+    """Nothing is said about the stranger, and the previous person is not left standing."""
+    hermes = FakeSessionContext(**{USER_ID: SENDER})
+    module = module_for(shared_gateway(), hermes, settings={"context.session_vars": False})
+    assert "Sam" in start(module)
+
+    added = module.on_pre_llm_call(session_id="s1", sender_id=OPENER)
+    assert added == {"context": RETRACTED_BY_SENDER}
+    assert module.on_pre_llm_call(session_id="s1", sender_id=OPENER) is None

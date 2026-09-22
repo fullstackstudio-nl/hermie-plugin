@@ -52,8 +52,8 @@ SECTION_VERSION = 1
 PROVIDER_PREFIX = re.compile(r"^([A-Za-z][A-Za-z0-9._-]*):(?!//)(.+)$")
 
 # Every rung of the resolution order, named once. The first three are where a
-# sender can come from and belong to the module that asks; the rest are what
-# `resolve` falls back to. They are here together because `/me` answers with
+# sender can come from, in the order they are asked, and belong to the module
+# that asks; the rest are what `resolve` falls back to. They are here together because `/me` answers with
 # them and a person reading that answer should be reading one vocabulary.
 BY_HOOK = "hook sender"
 BY_SESSION_VARS = "session variables"
@@ -63,7 +63,7 @@ BY_APP_DEFAULT = "app default"
 BY_ONLY_USER = "only registered person"
 BY_NOBODY = "nobody"
 
-SENDER_RUNGS = (BY_HOOK, BY_SESSION_VARS, BY_LIVE_SESSION)
+SENDER_RUNGS = (BY_HOOK, BY_LIVE_SESSION, BY_SESSION_VARS)
 
 # Per-field caps, applied before the whole-section cap, so one long field cannot
 # crowd out the short ones that identify the person.
@@ -252,7 +252,13 @@ def resolve_with_reason(
         return section.users[configured_default], BY_CONFIGURED
     if section.default_user and section.default_user in section.users:
         return section.users[section.default_user], BY_APP_DEFAULT
-    if len(section.users) == 1:
+    # Only where the gateway named nobody at all. The two defaults above are
+    # somebody's statement about who to assume — the operator's in the config,
+    # the app's in the section — while this rung is a guess, and a guess must
+    # not answer for a gateway that DID name somebody. A login the app has no
+    # row for is a person the app has no row for, and handing them the only
+    # registered person's notes is how one person's profile reaches another.
+    if not sender_id and len(section.users) == 1:
         return next(iter(section.users.values())), BY_ONLY_USER
     return None, BY_NOBODY
 
@@ -261,9 +267,10 @@ def resolve(section: ContextSection, *, sender_id: str = "", configured_default:
     """Whose context to use.
 
     In order: the sender the gateway named, then the operator's configured
-    default, then the app's own default, then — only when exactly one person is
-    registered — that person. With several registered users and no way to tell
-    who is asking, this returns nothing: showing a bot the wrong person's notes
+    default, then the app's own default, then — only where the gateway named
+    nobody and exactly one person is registered — that person. With no way to
+    tell who is asking, or with a sender the app has no row for and no default
+    naming anyone, this returns nothing: showing a bot the wrong person's notes
     is worse than showing it none.
 
     The sender is matched by `match_sender`, so a login that carries its
@@ -318,6 +325,36 @@ RETRACTED_IN_CHAT = (
 INTRODUCED = (
     "This is reaching this chat for the first time; "
     "nothing earlier in it said who you are talking to."
+)
+
+# And when the chat is shared. One session can carry turns from several people:
+# a Bot Chat somebody started is a chat anybody who can reach the gateway may
+# type into, and whoever started it is not the one sending every turn afterwards.
+# The copy the chat already holds describes the person it was rendered for, so a
+# turn from somebody else has to say that the person has CHANGED rather than
+# that they edited anything — a model told "they changed this" about a different
+# person merges two people into one, which is the failure this is here to end.
+SUPERSEDES_BY_SENDER = (
+    "Somebody else is sending this turn. This is who is talking to you now, "
+    "and it replaces what the system prompt says about who that is."
+)
+
+SUPERSEDES_BY_SENDER_IN_CHAT = (
+    "Somebody else is sending this turn. This is who is talking to you now, "
+    "and it replaces what was said about them earlier in this chat."
+)
+
+# The same change, to somebody the app knows nothing about. Nothing can be said
+# about them, so the only honest move is to withdraw the person who was named:
+# a bot that goes on using the previous name is addressing the wrong person.
+RETRACTED_BY_SENDER = (
+    "Somebody else is sending this turn and nothing is shared about them. "
+    "Disregard what the system prompt says about who you are talking to."
+)
+
+RETRACTED_BY_SENDER_IN_CHAT = (
+    "Somebody else is sending this turn and nothing is shared about them. "
+    "Disregard what was said earlier in this chat about who you are talking to."
 )
 
 

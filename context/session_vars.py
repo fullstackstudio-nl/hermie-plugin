@@ -12,9 +12,15 @@ session record names the login it admitted (`live_session.py`), and the app's
 metadata names the registered person. This module fills in that gap, and only
 that gap:
 
-- it writes nothing when `HERMES_SESSION_USER_ID` already holds a value, so it
-  becomes a no-op the day Hermes fills them in on this path;
-- it writes each variable only when that variable is empty;
+- it writes nothing when `HERMES_SESSION_USER_ID` already names the person
+  sending this turn, so it becomes a no-op the day Hermes fills them in on this
+  path;
+- it writes each variable only when that variable is empty — with one exception,
+  which is the whole reason the shim earns its keep on a SHARED chat: a value
+  bound at session start names whoever started the session, and on a turn from
+  somebody else it is not a value to preserve, it is a value that contradicts
+  the person actually typing. Then, and only then, the trio is rewritten for the
+  sender this module resolved (`fill(..., replace=True)`);
 - it writes them the way Hermes does, through the same `ContextVar`s, rather
   than through the process environment — a process-wide environment write would outlive
   the turn and reach every other session in the gateway.
@@ -93,11 +99,29 @@ class SessionVars:
         except Exception:
             return ""
 
-    def fill(self, values: Dict[str, str]) -> Dict[str, str]:
-        """Set each named variable that is empty. Returns what was written."""
+    def fill(self, values: Dict[str, str], *, replace: bool = False) -> Dict[str, str]:
+        """Set each named variable that is empty. Returns what was written.
+
+        `replace` is for the one case where a value that is already there is
+        WRONG rather than merely present: a session started by one login and
+        typed into by another keeps the first login bound for the life of the
+        session, so `HERMES_SESSION_USER_NAME` goes on naming somebody who left.
+        Then the whole trio is rewritten for the person sending this turn,
+        including back to empty — a name belonging to the previous person is not
+        a value to keep, it is the contradiction being fixed. The caller decides
+        this, and only after establishing that the two ids are different people
+        (`render.same_user`), so an id merely spelled with its provider prefix
+        is left exactly as the gateway wrote it.
+
+        Either way a variable that already holds what is wanted is not written,
+        so the shim stays a no-op on every gateway that fills these in itself.
+        """
         written: Dict[str, str] = {}
         for name, value in values.items():
-            if not value or self.read(name):
+            current = self.read(name)
+            if current == value:
+                continue
+            if not replace and (not value or current):
                 continue
             variable = self.variable(name)
             if variable is None:
