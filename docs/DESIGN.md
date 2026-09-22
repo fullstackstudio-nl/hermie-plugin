@@ -1054,12 +1054,16 @@ holds, and it is one it minted itself.
 
 ---
 
-## 8. Setting a profile's display name — Hermes already does it
+## 8. Setting a profile's display name
 
-Written down here because the obvious place to put it would have been a route on
-this plugin, and that route would have been a second, worse door to something
-core already serves. Read out of Hermes 0.21.3 so an app can call it without
-re-deriving any of it.
+Core serves this for one profile only. Its `PATCH /api/profiles/{name}` sets a
+display name on `default`; on every other profile the same call renames the
+profile itself, which moves its directory and every client's handle for it. An
+app that only wants a friendlier label therefore uses this plugin's
+`PATCH /api/plugins/hermie/profiles/{name}` (see the README), which writes the
+same `display_name` key through the same `hermes_cli.profiles.write_profile_meta`
+and changes nothing else. What follows is core's route as read out of Hermes
+0.21.3, kept because an app still meets it for `default` and for real renames.
 
 **The route is `PATCH /api/profiles/{name}`**, on the dashboard server, behind
 the same auth as everything else there. Not `POST …/rename`.
