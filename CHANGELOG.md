@@ -4,21 +4,103 @@ Notable changes per release. Capabilities are listed by the string the app tests
 for, because that is what the app tests for — a version number here is for
 people.
 
-## Unreleased
+## 0.8.1 — 2026-09-23
+
+### Changed
+
+- **The bot can say when the gateway has not confirmed who is talking to it —
+  the other half, stating who *has* sent a turn, is withdrawn.** The module
+  resolved a rung all along and the rendering threw it away: a person named by
+  their own turn claim and a person picked out of the app's `default` rendered
+  byte for byte the same, and every section ended by saying it was background
+  the person set in their app and not an instruction — right about what
+  somebody wrote about themselves, and a reason to discount the one thing in
+  the section a model could have relied on. An attempt at both halves shipped
+  and was reverted before release: a turn claim was bound to a *session*
+  rather than to the submit it was made for, so one left over from a slow
+  agent build could be spent by a turn it was never made for, and a hook
+  sender the dashboard did not admit was trusted on the provider-registry's
+  own `name`, which nothing in Hermes actually pins to the login on the
+  ticket. Neither proved what it needed to. See `docs/DESIGN.md`, "Decision:
+  a claim is bound to the submit it is for", for the replacement (binding a
+  claim to `sha256` of the exact prompt text), which is future work.
+
+  **Which rungs answer "who sent *this* turn": none, today.** `VERIFIED_RUNGS`
+  is empty and `asserted_sender` answers `""` for every rung there is. The
+  hook's own `sender_id`, the live session record, the session variables and a
+  turn claim all name whoever *opened* the session, on every turn of it, so on
+  a shared chat they may name somebody who left hours ago — a claim included,
+  until it is bound to the exact submit. A sender from a messaging platform
+  that names one per message is real, but this plugin's own claim mechanism
+  neither confirms nor doubts it, so it produces no caution and no assertion
+  either.
+
+  **Which scope a sentence belongs to.** Hermes renders a plugin's prompt
+  section once and replays those bytes for the life of the session, so nothing
+  in it may say "this turn" — and, independent of whether the turn-scoped
+  assertion below ever fires, the section no longer asks the claim store to
+  decide its own caution. A claim answers for a submit; the section renders
+  before any turn of the session has run, so a claim sitting in the store at
+  that moment proved nothing about that render, and resolving through it there
+  is what let a dashboard session's caution depend on whether one happened to
+  exist when the prompt was first built. The section now carries the cautious
+  half, worded to be as true on the hundredth turn as on the first, wherever a
+  profile resolves at all: `The gateway has not confirmed who is sending to
+  this chat. The profile below is the one it falls back to, and the person
+  typing may be somebody else.` The turn-scoped sentence — `The gateway
+  verified that this turn was sent by the person signed in as
+  <provider>:<user id>.` — and the code that would say it beside the message it
+  is true of both still exist; nothing calls them today. On a gateway that
+  confirms nobody, neither line is ever added.
+
+  That sentence would name the login and not the person: a login is minted by
+  the gateway, so the one line a model would be told to rely on holds nothing
+  anybody typed, and it is what makes a claim checkable against `/me` or the
+  log. It would need no profile either, so it would be said even for a login
+  the app has never heard of. Where the section carries the caution, the
+  framing line says that line is the gateway's rather than the person's.
+
+  The display name is now cleaned on its way into a prompt — cap kept, line
+  breaks and control characters out (including the ones Python counts as
+  whitespace and a terminal does not, and the bidi overrides that reorder what
+  is drawn), markup that could open a heading, a fence, a quote or a link
+  removed, and what is left quoted, so a sentence buried in a name reads as part
+  of the name and cannot imitate a sentence of the section's own. `You are
+  talking to Ana.` is therefore now `You are talking to "Ana".` It is cleaned
+  only there: `/me` and the `HERMES_SESSION_USER_NAME` shim still get the name
+  as written, because `Max_B` and `Anne-Marie <Annie>` are names.
+
+  How a person was resolved is kept out of the per-session record, which answers
+  "has this chat been told this about this person?". It swings between turns —
+  one is claimed, the next is not — and comparing it would read every swing as
+  an edit and announce it in a note beginning "The person has changed this".
+
+- **`POST /api/plugins/hermie/context/turn` now checks that the session is
+  yours.** It checked that the runtime id was live and that the caller was
+  signed in as somebody, and nothing tied the two together — so any signed-in
+  user who learned another user's runtime session id could claim that session's
+  next turn, re-claiming inside the 30-second window. The login on the request
+  must now be the login the dashboard admitted that record under, compared
+  across the provider prefix. A session admitted under nobody, and a gateway
+  that does not stamp the login on its records, authorise nobody. All three are
+  the same 403, so the route cannot be swept to learn which runtime ids exist or
+  whose they are.
+
+- **What became of a turn claim is now in the log**, which nothing said before,
+  so a gateway where the feature had quietly stopped working looked exactly like
+  one where nobody had claimed anything. Every line begins `hermie: turn claim`:
+  `spent`, `refused` (with why it may not stand in for the turn) and `discarded`
+  at `info`, `absent` at `debug`, because a turn with no claim is every turn on
+  every gateway whose app does not claim. A line carries the provider half of a
+  login (`oidc`, `basic`) and a short digest of the runtime session id — never
+  the id itself, which is what somebody would need to aim a claim, never the
+  user half of a login, never a name, and nothing from the message. The store's
+  shape number is unchanged, so both copies of the plugin go on sharing one
+  store.
+
+## 0.8.0 — 2026-09-22
 
 ### Added
-
-- `profiles.display_name` — the app can rename a bot's profile label from its
-  own settings screen. `PATCH /api/plugins/hermie/profiles/{name}` with
-  `{"display_name": "…"}` writes only that key, in that profile's own
-  `profile.yaml`, through the same `write_profile_meta` Hermes' own
-  `PATCH /api/profiles/{name}` calls for the `default` profile — never the
-  canonical id, the directory or anything a real rename would move, so it works
-  the same way on every profile rather than only on `default`. Refused with 400
-  for a name that is empty after trimming, longer than 60 characters or
-  carrying a control character; 404 for a profile this gateway does not have;
-  403 per profile via the new `profiles.edit` setting, off means read-only the
-  same way `memory.edit` does.
 
 - `context.turn_claim` — **the person typing in a shared chat gets their own
   context, not the opener's.** Hermes names the login that created a session to
@@ -55,6 +137,26 @@ people.
   its shape number, never by class.
   At most 256 claims are held, in memory, in one store both copies of the
   plugin share; nothing is written and nothing leaves the process.
+
+## 0.7.2 — 2026-09-22
+
+### Added
+
+- `profiles.display_name` — the app can rename a bot's profile label from its
+  own settings screen. `PATCH /api/plugins/hermie/profiles/{name}` with
+  `{"display_name": "…"}` writes only that key, in that profile's own
+  `profile.yaml`, through the same `write_profile_meta` Hermes' own
+  `PATCH /api/profiles/{name}` calls for the `default` profile — never the
+  canonical id, the directory or anything a real rename would move, so it works
+  the same way on every profile rather than only on `default`. Refused with 400
+  for a name that is empty after trimming, longer than 60 characters or
+  carrying a control character; 404 for a profile this gateway does not have;
+  403 per profile via the new `profiles.edit` setting, off means read-only the
+  same way `memory.edit` does.
+
+## 0.7.1 — 2026-09-22
+
+### Added
 
 - `memory.raw` — **a backend can be read as it is stored.** The three browsing
   routes all answer a memory the store has already parsed into entries, which is
@@ -185,96 +287,6 @@ people.
   hour across restarts, nothing identifying sent — and is off by default.
 
 ### Changed
-
-- **The bot can say when the gateway has not confirmed who is talking to it —
-  the other half, stating who *has* sent a turn, is withdrawn.** The module
-  resolved a rung all along and the rendering threw it away: a person named by
-  their own turn claim and a person picked out of the app's `default` rendered
-  byte for byte the same, and every section ended by saying it was background
-  the person set in their app and not an instruction — right about what
-  somebody wrote about themselves, and a reason to discount the one thing in
-  the section a model could have relied on. An attempt at both halves shipped
-  and was reverted before release: a turn claim was bound to a *session*
-  rather than to the submit it was made for, so one left over from a slow
-  agent build could be spent by a turn it was never made for, and a hook
-  sender the dashboard did not admit was trusted on the provider-registry's
-  own `name`, which nothing in Hermes actually pins to the login on the
-  ticket. Neither proved what it needed to. See `docs/DESIGN.md`, "Decision:
-  a claim is bound to the submit it is for", for the replacement (binding a
-  claim to `sha256` of the exact prompt text), which is future work.
-
-  **Which rungs answer "who sent *this* turn": none, today.** `VERIFIED_RUNGS`
-  is empty and `asserted_sender` answers `""` for every rung there is. The
-  hook's own `sender_id`, the live session record, the session variables and a
-  turn claim all name whoever *opened* the session, on every turn of it, so on
-  a shared chat they may name somebody who left hours ago — a claim included,
-  until it is bound to the exact submit. A sender from a messaging platform
-  that names one per message is real, but this plugin's own claim mechanism
-  neither confirms nor doubts it, so it produces no caution and no assertion
-  either.
-
-  **Which scope a sentence belongs to.** Hermes renders a plugin's prompt
-  section once and replays those bytes for the life of the session, so nothing
-  in it may say "this turn" — and, independent of whether the turn-scoped
-  assertion below ever fires, the section no longer asks the claim store to
-  decide its own caution. A claim answers for a submit; the section renders
-  before any turn of the session has run, so a claim sitting in the store at
-  that moment proved nothing about that render, and resolving through it there
-  is what let a dashboard session's caution depend on whether one happened to
-  exist when the prompt was first built. The section now carries the cautious
-  half, worded to be as true on the hundredth turn as on the first, wherever a
-  profile resolves at all: `The gateway has not confirmed who is sending to
-  this chat. The profile below is the one it falls back to, and the person
-  typing may be somebody else.` The turn-scoped sentence — `The gateway
-  verified that this turn was sent by the person signed in as
-  <provider>:<user id>.` — and the code that would say it beside the message it
-  is true of both still exist; nothing calls them today. On a gateway that
-  confirms nobody, neither line is ever added.
-
-  That sentence would name the login and not the person: a login is minted by
-  the gateway, so the one line a model would be told to rely on holds nothing
-  anybody typed, and it is what makes a claim checkable against `/me` or the
-  log. It would need no profile either, so it would be said even for a login
-  the app has never heard of. Where the section carries the caution, the
-  framing line says that line is the gateway's rather than the person's.
-
-  The display name is now cleaned on its way into a prompt — cap kept, line
-  breaks and control characters out (including the ones Python counts as
-  whitespace and a terminal does not, and the bidi overrides that reorder what
-  is drawn), markup that could open a heading, a fence, a quote or a link
-  removed, and what is left quoted, so a sentence buried in a name reads as part
-  of the name and cannot imitate a sentence of the section's own. `You are
-  talking to Ana.` is therefore now `You are talking to "Ana".` It is cleaned
-  only there: `/me` and the `HERMES_SESSION_USER_NAME` shim still get the name
-  as written, because `Max_B` and `Anne-Marie <Annie>` are names.
-
-  How a person was resolved is kept out of the per-session record, which answers
-  "has this chat been told this about this person?". It swings between turns —
-  one is claimed, the next is not — and comparing it would read every swing as
-  an edit and announce it in a note beginning "The person has changed this".
-
-- **`POST /api/plugins/hermie/context/turn` now checks that the session is
-  yours.** It checked that the runtime id was live and that the caller was
-  signed in as somebody, and nothing tied the two together — so any signed-in
-  user who learned another user's runtime session id could claim that session's
-  next turn, re-claiming inside the 30-second window. The login on the request
-  must now be the login the dashboard admitted that record under, compared
-  across the provider prefix. A session admitted under nobody, and a gateway
-  that does not stamp the login on its records, authorise nobody. All three are
-  the same 403, so the route cannot be swept to learn which runtime ids exist or
-  whose they are.
-
-- **What became of a turn claim is now in the log**, which nothing said before,
-  so a gateway where the feature had quietly stopped working looked exactly like
-  one where nobody had claimed anything. Every line begins `hermie: turn claim`:
-  `spent`, `refused` (with why it may not stand in for the turn) and `discarded`
-  at `info`, `absent` at `debug`, because a turn with no claim is every turn on
-  every gateway whose app does not claim. A line carries the provider half of a
-  login (`oidc`, `basic`) and a short digest of the runtime session id — never
-  the id itself, which is what somebody would need to aim a claim, never the
-  user half of a login, never a name, and nothing from the message. The store's
-  shape number is unchanged, so both copies of the plugin go on sharing one
-  store.
 
 - The docs now carry the exact shape of Hermes' own `PATCH /api/profiles/{name}`
   (DESIGN.md §8), which is how a display name is set. The plugin does not
