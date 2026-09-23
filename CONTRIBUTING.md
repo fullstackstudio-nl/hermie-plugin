@@ -77,3 +77,30 @@ and what `register()` actually registers.
 
 Conventional commits, present tense, describing the behaviour that changed
 rather than the files that moved.
+
+## Releasing
+
+`main` deploys itself to both gateways within about fifteen minutes of a push,
+so a release here is a version bump on code that is already live, not a
+shipping step. Cutting one:
+
+1. Bump the version in both places it lives: `version` in `plugin.yaml` and
+   `PLUGIN_VERSION` in `contract.py`. They must always agree.
+2. Give `CHANGELOG.md` a real section for the new version, dated the day of
+   the release (`## 0.8.2 — 2026-10-01`), above the previous one. Move each
+   `Unreleased` entry that is going out under it, grouped under `### Added`,
+   `### Changed`, `### Fixed` as it already is.
+3. Commit only those two version fields plus the changelog, as its own
+   commit: `chore(release): <version>`.
+4. Tag that commit as an annotated tag: `git tag -a v<version> -m "Hermie
+   plugin <version>"`.
+5. Push `main` and the tag: `git push && git push --tags`.
+6. Run the checks before any of the above lands, not after:
+   `.venv/bin/pytest --rootdir=tests tests`, `hermes plugins validate .`,
+   `hermes plugins doctor .`.
+7. Create the GitHub release from the tag: `gh release create v<version>
+   --title "<version>" --notes "<notes>"`. Write the notes in plain
+   sentences — what changed, the way you'd tell a colleague, not a list of
+   commit subjects or file names. Three to six bullets is usually right.
+   End with a link to the commit comparison for anyone who wants the detail:
+   `https://github.com/fullstackstudio-nl/hermie-plugin/compare/v<previous>...v<version>`
