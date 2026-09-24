@@ -86,11 +86,8 @@ def gateway(tmp_path, *, app_meta=None, per_user=None, settings=None, profile="j
     return home, FakeCtx(home, settings=settings, profile=profile)
 
 
-def app_meta_with(*, registrations=None, seen=None, context_users=None):
-    meta = {"v": 1, "push": {"registrations": registrations or {}, "seen": seen or {}}}
-    if context_users is not None:
-        meta["context"] = {"v": 1, "users": context_users}
-    return meta
+def app_meta_with(*, registrations=None, seen=None):
+    return {"v": 1, "push": {"registrations": registrations or {}, "seen": seen or {}}}
 
 
 # The switches a REAL row carries: the five the app's settings screen has
@@ -127,7 +124,9 @@ def test_loading_registers_the_hooks_a_gateway_will_fire(tmp_path, monkeypatch):
 
     for name in ("post_llm_call", "on_session_end", "pre_approval_request", "pre_tool_call", "pre_llm_call"):
         assert name in ctx.hooks, f"{name} was never registered"
-    assert "hermie.device" in ctx.sections
+    # HERM-119: the context module no longer renders anything into the system
+    # prompt — there is no more profile to say. `pre_llm_call` alone is left.
+    assert "hermie.device" not in ctx.sections
 
 
 def test_loading_publishes_an_advert_the_app_can_read(tmp_path, monkeypatch):
@@ -139,12 +138,16 @@ def test_loading_publishes_an_advert_the_app_can_read(tmp_path, monkeypatch):
     advert = uimeta.read_key(uimeta.PLUGIN_KEY, home)
     caps = contract.read_capabilities(advert)
     assert contract.CAP_PUSH_EXPO in caps
-    assert contract.CAP_CONTEXT_PROMPT in caps
     assert contract.CAP_PUSH_MUTE in caps
     assert contract.CAP_PUSH_SEEN_PER_CHAT in caps
     assert contract.CAP_UIMETA_PER_USER in caps
-    assert contract.CAP_CONTEXT_ORIENTATION in caps
     assert contract.CAP_PROFILE_DISPLAY_NAME in caps
+    assert contract.CAP_CONTEXT_TURN_CLAIM in caps
+    # HERM-119: nothing left to render a profile, so nothing claims to.
+    assert contract.CAP_CONTEXT_PROMPT not in caps
+    assert contract.CAP_CONTEXT_ORIENTATION not in caps
+    assert contract.CAP_CONTEXT_PER_BOT not in caps
+    assert contract.CAP_CONTEXT_LIVE not in caps
     assert advert["version"] == contract.PLUGIN_VERSION
     assert advert["modules"]["push"] == "on"
     assert advert["modules"]["presence"] == "planned"
@@ -188,7 +191,7 @@ def test_a_gateway_too_old_for_commands_still_loads(tmp_path, monkeypatch):
 
     caps = contract.read_capabilities(uimeta.read_key(uimeta.PLUGIN_KEY, home))
     assert contract.CAP_COMMAND_ME not in caps
-    assert contract.CAP_CONTEXT_PROMPT in caps
+    assert contract.CAP_CONTEXT_TURN_CLAIM in caps
 
 
 def test_a_switched_off_module_claims_nothing(tmp_path, monkeypatch):
@@ -254,14 +257,13 @@ def test_writing_an_app_key_is_refused_outright():
             raise AssertionError(f"writing {key} should be refused")
 
 
-def test_the_per_user_key_is_read_for_push_and_for_context(tmp_path, monkeypatch):
+def test_the_per_user_key_is_read_for_push(tmp_path, monkeypatch):
     home, ctx = gateway(
         tmp_path,
         per_user={
             "u1": {
                 "v": 1,
                 "push": {"registrations": {"i1": expo_registration()}},
-                "context": {"v": 1, "users": {"u1": {"displayName": "Kim"}}},
             }
         },
     )
@@ -270,7 +272,6 @@ def test_the_per_user_key_is_read_for_push_and_for_context(tmp_path, monkeypatch
     import hermie_plugin.push as push_pkg
 
     hermie_plugin.register(ctx)
-    assert "Kim" in ctx.sections["hermie.device"]({"session_id": "s1", "profile_name": "jurist"})
 
     module = push_pkg.PushModule(hermie_plugin.Runtime(ctx, home=home))
     assert [r.user_id for r in module.section().registrations] == ["u1"]
@@ -406,70 +407,22 @@ def test_an_unregistered_gateway_sends_nothing(tmp_path, monkeypatch):
 # -- context, end to end -----------------------------------------------------
 
 
-def test_the_frozen_section_renders_the_only_registered_person(tmp_path, monkeypatch):
-    home, ctx = gateway(
-        tmp_path,
-        app_meta=app_meta_with(
-            context_users={"u1": {"displayName": "Kim", "timezone": "Europe/Amsterdam"}}
-        ),
-    )
+def test_a_turn_from_a_named_sender_adds_nothing_since_no_rung_is_verified(tmp_path, monkeypatch):
+    """HERM-119: there is no more profile to render, and `VERIFIED_RUNGS` is
+    still empty, so a plain sender never earns a line on the turn either."""
+    home, ctx = gateway(tmp_path, app_meta=app_meta_with())
     monkeypatch.setattr(uimeta, "hermes_home", lambda: home)
     hermie_plugin.register(ctx)
 
-    rendered = ctx.sections["hermie.device"](
-        {"session_id": "s1", "profile_name": "jurist", "model": "m", "provider": "p", "platform": "", "cwd": ""}
-    )
-    assert "Kim" in rendered
-    assert "Europe/Amsterdam" in rendered
-
-
-def test_the_per_turn_path_stays_silent_for_the_person_already_in_the_prompt(tmp_path, monkeypatch):
-    """The common case must cost nothing per turn."""
-    home, ctx = gateway(
-        tmp_path, app_meta=app_meta_with(context_users={"u1": {"displayName": "Kim"}})
-    )
-    monkeypatch.setattr(uimeta, "hermes_home", lambda: home)
-    hermie_plugin.register(ctx)
-
-    ctx.sections["hermie.device"]({"session_id": "s1", "profile_name": "jurist"})
     assert ctx.fire("pre_llm_call", session_id="s1", sender_id="u1") == [None]
 
 
-def test_a_session_core_never_rendered_for_is_introduced_once(tmp_path, monkeypatch):
-    """The chat that was already open when the plugin arrived.
-
-    Core builds a session's prompt once and replays it, so a session that
-    started before this plugin existed has no section and never will. Nobody is
-    named on this ungated gateway either, which is the install this is for: the
-    one registered person is who the chat has to meet. It fires on that chat's
-    next turn and not on the ones after it.
-    """
-    home, ctx = gateway(
-        tmp_path, app_meta=app_meta_with(context_users={"u1": {"displayName": "Kim"}})
-    )
+def test_a_turn_from_nobody_is_just_as_quiet(tmp_path, monkeypatch):
+    home, ctx = gateway(tmp_path, app_meta=app_meta_with())
     monkeypatch.setattr(uimeta, "hermes_home", lambda: home)
     hermie_plugin.register(ctx)
 
-    first = ctx.fire("pre_llm_call", session_id="s1", sender_id="")[0]
-    assert "Kim" in first["context"]
-    assert "Hermie app" in first["context"], "the bot was told the facts but not where they live"
     assert ctx.fire("pre_llm_call", session_id="s1", sender_id="") == [None]
-
-
-def test_a_second_person_on_the_same_session_gets_their_own_context(tmp_path, monkeypatch):
-    home, ctx = gateway(
-        tmp_path,
-        app_meta=app_meta_with(
-            context_users={"u1": {"displayName": "Kim"}, "u2": {"displayName": "Ana"}}
-        ),
-        settings={"context.default_user": "u1"},
-    )
-    monkeypatch.setattr(uimeta, "hermes_home", lambda: home)
-    hermie_plugin.register(ctx)
-
-    ctx.sections["hermie.device"]({"session_id": "s1", "profile_name": "jurist"})
-    result = ctx.fire("pre_llm_call", session_id="s1", sender_id="u2")[0]
-    assert result is not None and "Ana" in result["context"]
 
 
 def test_a_smart_approval_asks_nobody_and_so_tells_nobody(tmp_path, monkeypatch):

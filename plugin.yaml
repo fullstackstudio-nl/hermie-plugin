@@ -8,10 +8,10 @@ manifest_version: 1
 version: 0.8.1
 description: >-
   Hermie's gateway-side companion: push notifications for bot messages, approval
-  and clarify requests, and cron deliveries, plus per-device context injected
-  into a bot's system prompt, and a `/me` command that says who the gateway
-  thinks it is talking to. Registrations and settings live in the gateway's own
-  profile ui_meta; nothing is sent to a third-party relay.
+  and clarify requests, and cron deliveries, plus a `/me` command that says who
+  the gateway thinks it is talking to and how it worked that out. Registrations
+  and settings live in the gateway's own profile ui_meta; nothing is sent to a
+  third-party relay.
 author: FullStack Studio
 license: MIT
 homepage: https://github.com/fullstackstudio-nl/hermie-plugin
@@ -51,7 +51,7 @@ config_schema:
   modules.context:
     type: bool
     default: true
-    description: "Inject per-device context into a bot's system prompt."
+    description: "Work out who is sending a turn, and answer /me about it."
   modules.memory:
     type: bool
     default: true
@@ -113,16 +113,14 @@ config_schema:
     type: str
     default: ""
     description: "mailto: or https: contact put in the VAPID JWT `sub` claim."
-  context.max_chars:
-    type: int
-    default: 1200
-    description: "Hard cap on the rendered device-context section."
   context.session_vars:
     type: bool
     default: true
     description: >-
-      Fill in Hermes' own HERMES_SESSION_USER_ID, _ID_ALT and _NAME for a turn
-      when they are empty and the plugin can say who is asking.
+      Fill in Hermes' own HERMES_SESSION_USER_ID for a turn when it is empty
+      and the plugin can say who is asking, correcting it (and blanking
+      _ID_ALT and _NAME, which this plugin no longer has anything to put in
+      them) when it names somebody else.
   update.check:
     type: bool
     default: false
@@ -132,9 +130,3 @@ config_schema:
       advert already carries this build's version and installed commit, which
       is enough for the app to work that out on its own network. Nothing
       identifying is sent either way.
-  context.default_user:
-    type: str
-    default: ""
-    description: >-
-      Which registered user's context to use when the gateway cannot say who
-      sent the prompt. Empty means the default the app set, else the only registered person.

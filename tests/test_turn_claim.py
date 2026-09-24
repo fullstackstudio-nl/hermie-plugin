@@ -24,9 +24,6 @@ from hermie_plugin.context.render import (
     BY_CLAIM,
     BY_HOOK,
     BY_PLATFORM,
-    INTRODUCED,
-    SENDER_VERIFIED,
-    SUPERSEDES_BY_SENDER,
 )
 from hermie_plugin.context.session_vars import (
     SESSION_ID,
@@ -69,24 +66,11 @@ class FakeSessionContext:
 
 
 class FakeRuntime:
-    def __init__(self, sections):
-        self.sections = sections
-
-    def app_stamp(self):
-        return (1, 1)
-
     def config(self, key, default=None):
         return default
 
     def bot_name(self):
         return "jurist"
-
-    def app_sections(self):
-        return self.sections
-
-
-def bag(users, default=""):
-    return {"context": {"v": 1, "default": default, "users": users}}
 
 
 class Clock:
@@ -97,29 +81,15 @@ class Clock:
         return self.now
 
 
-def people():
-    """Both people have rows, and the two bags disagree about the default."""
-    return [
-        ("opener-sub", bag({"opener-sub": {"displayName": "Otto"}}, default="opener-sub")),
-        ("sender-sub", bag({"sender-sub": {"displayName": "Sam"}}, default="sender-sub")),
-    ]
-
-
 def module_with(claims, hermes=None):
     hermes = hermes if hermes is not None else FakeSessionContext(**{UI_SESSION_ID: SID, USER_ID: OPENER})
     return ContextModule(
-        FakeRuntime(people()),
+        FakeRuntime(),
         session_vars=SessionVars(hermes),
         live_sessions=LiveSessions(types.ModuleType("absent")),
         claims=claims,
         auth_providers=lambda: ("oidc", "basic"),
     )
-
-
-def opened_by_the_opener(module):
-    """The section is built at session start for whoever opened the chat."""
-    text = module.render_section({"session_id": "durable-1", "profile_name": "jurist"})
-    return text
 
 
 # -- the store -----------------------------------------------------------------
@@ -378,38 +348,36 @@ def test_a_claim_makes_the_turn_resolve_to_the_claimer_although_the_hook_names_t
     claims = TurnClaims(clock=Clock())
     hermes = FakeSessionContext(**{UI_SESSION_ID: SID, USER_ID: OPENER})
     module = module_with(claims, hermes)
-    assert "Otto" in opened_by_the_opener(module)
+    assert module.sender_with_source(OPENER, "durable-1") == (OPENER, BY_HOOK)
 
     claims.claim(SID, SENDER)
+    # `VERIFIED_RUNGS` is empty, so nothing today may SAY the gateway checked
+    # this — but the claim still changes who the turn resolves to.
     added = module.on_pre_llm_call(session_id="durable-1", sender_id=OPENER)
 
-    assert added is not None, "the claimer never reached the bot"
-    assert added["context"].startswith(SUPERSEDES_BY_SENDER)
-    assert "Sam" in added["context"] and "Otto" not in added["context"]
+    assert added is None, "nothing is asserted while BY_CLAIM sits in UNCONFIRMED_RUNGS"
     assert hermes.snapshot()[USER_ID] == SENDER
-    assert hermes.snapshot()[USER_NAME] == "Sam"
 
 
 def test_the_claim_is_spent_by_the_turn_that_used_it():
     claims = TurnClaims(clock=Clock())
     hermes = FakeSessionContext(**{UI_SESSION_ID: SID, USER_ID: OPENER})
     module = module_with(claims, hermes)
-    opened_by_the_opener(module)
 
     claims.claim(SID, SENDER)
     module.on_pre_llm_call(session_id="durable-1", sender_id=OPENER)
     assert len(claims) == 0
+    assert hermes.snapshot()[USER_ID] == SENDER
 
-    # The next turn carries no claim, so it is the opener's again, and says so.
-    added = module.on_pre_llm_call(session_id="durable-1", sender_id=OPENER)
-    assert added is not None and "Otto" in added["context"] and "Sam" not in added["context"]
+    # The next turn carries no claim, so it is the opener's again.
+    module.on_pre_llm_call(session_id="durable-1", sender_id=OPENER)
+    assert hermes.snapshot()[USER_ID] == OPENER
 
 
 def test_an_expired_claim_leaves_the_turn_to_the_hook():
     clock = Clock()
     claims = TurnClaims(clock=clock)
     module = module_with(claims)
-    opened_by_the_opener(module)
 
     claims.claim(SID, SENDER)
     clock.now += turn_claim.TTL_SECONDS + 5
@@ -421,7 +389,6 @@ def test_an_expired_claim_leaves_the_turn_to_the_hook():
 def test_a_claim_for_another_session_leaves_this_turn_alone():
     claims = TurnClaims(clock=Clock())
     module = module_with(claims)
-    opened_by_the_opener(module)
 
     claims.claim("ffff0000", SENDER)
 
@@ -456,35 +423,6 @@ def test_a_turn_without_a_runtime_id_never_matches_a_claim_key():
     assert claims.take("", aliases=("agent:main:telegram:dm:12345",)) == ""
 
 
-def test_building_the_prompt_ignores_a_claim_that_is_already_sitting_there():
-    """The frozen section never asks the claim store (Task 1 of the plan): a
-    claim answers for a submit, and this render runs before any turn of the
-    session has, so a claim already sitting there proves nothing about it. The
-    prompt is built for the opener the session variables name, cautioned,
-    exactly as if no claim had been made at all — and the claim itself is left
-    untouched for the turn it actually was made for.
-    """
-    claims = TurnClaims(clock=Clock())
-    hermes = FakeSessionContext(**{UI_SESSION_ID: SID, USER_ID: OPENER})
-    module = module_with(claims, hermes)
-
-    claims.claim(SID, SENDER)
-    text = opened_by_the_opener(module)
-    assert "Otto" in text and "Sam" not in text
-    assert claims.peek(SID) == SENDER, "the frozen section spent or read a claim it must not touch"
-
-    # The turn that follows still finds the claim waiting and spends it,
-    # resolving to the claimer — that half of the feature is untouched. What
-    # is gone is the assertion: nothing today may say the gateway checked who
-    # sent this turn (VERIFIED_RUNGS is empty until a claim is bound to the
-    # exact submitted text, see DESIGN.md "Decision (2026-09-22)").
-    added = module.on_pre_llm_call(session_id="durable-1", sender_id=OPENER)
-    assert added is not None
-    assert "Sam" in added["context"] and "Otto" not in added["context"]
-    assert SENDER_VERIFIED.split("{")[0] not in added["context"]
-    assert len(claims) == 0
-
-
 def test_me_names_the_claim_where_the_session_is_bound():
     """Only where a gateway binds the session for a command.
 
@@ -500,7 +438,7 @@ def test_me_names_the_claim_where_the_session_is_bound():
 
     answer = module.on_me_command("")
 
-    assert "Sam" in answer and RUNGS[BY_CLAIM] in answer
+    assert SENDER in answer and RUNGS[BY_CLAIM] in answer
 
 
 def test_me_spends_a_claim_only_where_the_session_is_bound():
@@ -513,7 +451,6 @@ def test_me_spends_a_claim_only_where_the_session_is_bound():
     claims = TurnClaims(clock=Clock())
     hermes = FakeSessionContext(**{UI_SESSION_ID: SID, USER_ID: OPENER})
     module = module_with(claims, hermes)
-    opened_by_the_opener(module)
 
     claims.claim(SID, SENDER)
     module.on_me_command("")
@@ -527,13 +464,12 @@ def test_the_session_variables_are_rewritten_for_the_claimer_not_the_opener():
     claims = TurnClaims(clock=Clock())
     hermes = FakeSessionContext(**{UI_SESSION_ID: SID, USER_ID: OPENER, USER_NAME: "Otto"})
     module = module_with(claims, hermes)
-    opened_by_the_opener(module)
 
     claims.claim(SID, SENDER)
     module.on_pre_llm_call(session_id="durable-1", sender_id=OPENER)
 
     assert hermes.snapshot()[USER_ID] == SENDER
-    assert hermes.snapshot()[USER_NAME] == "Sam"
+    assert hermes.snapshot().get(USER_NAME, "") == "", "there is no profile left to name the claimer with"
 
 
 @pytest.mark.parametrize(
@@ -572,7 +508,6 @@ def test_a_sender_spelled_as_another_dashboard_login_is_overridden():
 
 def test_a_turn_with_no_claim_is_exactly_what_it_was():
     module = module_with(TurnClaims(clock=Clock()))
-    opened_by_the_opener(module)
 
     assert module.on_pre_llm_call(session_id="durable-1", sender_id=OPENER) is None
 

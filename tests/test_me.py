@@ -1,24 +1,16 @@
-"""What `/me` answers, and what it answers when it cannot name anybody."""
+"""What `/me` answers, since HERM-119 removed the profile it used to report."""
 
 import types
 
 from hermie_plugin.context import ContextModule
 from hermie_plugin.context.live_session import GATEWAY_MODULE, LiveSessions
-from hermie_plugin.context.me import FIX, MAX_CHARS, RUNGS
-from hermie_plugin.context.render import BY_LIVE_SESSION, BY_ONLY_USER
-from hermie_plugin.context.session_vars import (
-    SESSION_ID,
-    SESSION_NAMES,
-    USER_ID,
-    USER_ID_ALT,
-    USER_NAME,
-    SessionVars,
-)
+from hermie_plugin.context.me import MAX_CHARS, RUNGS
+from hermie_plugin.context.render import BY_LIVE_SESSION, VERIFIED_RUNGS
+from hermie_plugin.context.session_vars import SESSION_ID, SESSION_NAMES, USER_ID, SessionVars
 
 
 class FakeRuntime:
-    def __init__(self, sections, settings=None, bot="jurist"):
-        self.sections = sections
+    def __init__(self, settings=None, bot="jurist"):
         self.settings = settings or {}
         self.bot = bot
 
@@ -27,30 +19,6 @@ class FakeRuntime:
 
     def bot_name(self):
         return self.bot
-
-    def app_sections(self):
-        return self.sections
-
-    def app_stamp(self):
-        return (1, 1)
-
-
-def bag(users, default=""):
-    return {"context": {"v": 1, "default": default, "users": users}}
-
-
-def person(**overrides):
-    entry = {
-        "displayName": "Kim",
-        "about": "Runs Willow Studio. Prefers short answers.",
-        "device": {"model": "iPhone 17 Pro", "os": "iOS 27", "appVersion": "1.4.0"},
-        "timezone": "Europe/Amsterdam",
-        "locale": "nl-NL",
-        "perBot": {"jurist": "Always cite the article number."},
-        "updatedAt": 1789957143,
-    }
-    entry.update(overrides)
-    return entry
 
 
 def gateway_naming(auth_user_id):
@@ -76,7 +44,7 @@ class FakeSessionContext:
     which is all `/me` gets to go on, since a slash command carries no id."""
 
     def __init__(self, **values):
-        names = (USER_ID, USER_ID_ALT, USER_NAME) + SESSION_NAMES
+        names = (USER_ID,) + SESSION_NAMES
         self._VAR_MAP = {name: FakeVariable(values.get(name, "")) for name in names}
 
     def get_session_env(self, name, default=""):
@@ -84,103 +52,73 @@ class FakeSessionContext:
         return variable.value if variable is not None else default
 
 
-def module_for(sections, *, login=None, settings=None):
+def module_for(*, login=None, settings=None):
     return ContextModule(
-        FakeRuntime(sections, settings),
+        FakeRuntime(settings),
         session_vars=SessionVars(FakeSessionContext(**{SESSION_ID: "sid-1"})),
         live_sessions=LiveSessions(gateway_naming(login) if login else None),
     )
 
 
-def test_it_names_the_person_and_how_it_found_them():
-    module = module_for(
-        [("7f3c02", bag({"7f3c02": person()})), ("ana", bag({"ana": person(displayName="Ana")}))],
-        login="self-hosted:7f3c02",
-    )
+def test_it_names_the_login_and_how_it_found_it():
+    module = module_for(login="self-hosted:7f3c02")
 
     answer = module.on_me_command()
+
     assert "Hermie context for jurist" in answer
-    assert "Kim" in answer
-    assert RUNGS[BY_LIVE_SESSION] in answer
-    # Both spellings, because which one is missing is the usual bug.
     assert "self-hosted:7f3c02" in answer
-    assert "7f3c02" in answer
+    assert RUNGS[BY_LIVE_SESSION] in answer
 
 
-def test_it_reports_the_person_the_app_wrote():
-    module = module_for([("7f3c02", bag({"7f3c02": person()}))], login="self-hosted:7f3c02")
-
-    answer = module.on_me_command()
-    assert "iPhone 17 Pro running iOS 27" in answer
-    assert "Europe/Amsterdam, nl-NL" in answer
-    assert "Runs Willow Studio" in answer
-    assert "Always cite the article number." in answer
-
-
-def test_it_names_the_key_the_entry_came_from_and_when_it_was_written():
-    module = module_for([("7f3c02", bag({"7f3c02": person()}))], login="self-hosted:7f3c02")
+def test_it_says_whether_the_rung_is_confirmed():
+    module = module_for(login="self-hosted:7f3c02")
 
     answer = module.on_me_command()
-    assert "hermie-app:7f3c02" in answer
-    assert "updated 2026-09-21" in answer
+
+    # `VERIFIED_RUNGS` is empty today, so every rung reports unconfirmed.
+    assert BY_LIVE_SESSION not in VERIFIED_RUNGS
+    assert "Confirmed" in answer
+    assert "no — the gateway has not confirmed who is sending" in answer
 
 
-def test_the_legacy_key_says_it_is_the_shared_one():
-    module = module_for([("", bag({"7f3c02": person()}))])
-
-    answer = module.on_me_command()
-    assert "hermie-app" in answer
-    assert "shared key" in answer
-    assert RUNGS[BY_ONLY_USER] in answer
-
-
-def test_a_bot_with_no_note_of_its_own_does_not_borrow_one():
-    module = module_for([("7f3c02", bag({"7f3c02": person()}))], login="self-hosted:7f3c02")
-    module.runtime.bot = "marketing"
-
-    assert "Always cite the article number." not in module.on_me_command()
-
-
-def test_it_says_nobody_and_what_to_do_about_it():
-    module = module_for([("", bag({"7f3c02": person(), "ana": person(displayName="Ana")}))])
+def test_it_says_nobody_when_the_gateway_has_named_no_one():
+    module = module_for()
 
     answer = module.on_me_command()
-    assert "nobody" in answer
-    assert "2 people are registered" in answer
-    assert FIX in answer
-    assert "Kim" not in answer
-    assert "Ana" not in answer
+
+    assert "Login:      nobody" in answer
+    assert "the gateway has not named anyone for this session" in answer
 
 
-def test_a_sender_nobody_registered_is_shown_rather_than_swallowed():
-    """"The gateway said nothing" and "it said someone we do not know" are
-    different problems, and only one of them is the app's."""
-    module = module_for(
-        [("", bag({"7f3c02": person(), "ana": person(displayName="Ana")}))],
-        login="oidc:stranger",
-    )
+def test_it_never_mentions_a_setting_that_no_longer_exists():
+    """HERM-119 removed Settings → Context; the report must not send anyone
+    looking for it, confirmed or not."""
+    named = module_for(login="self-hosted:7f3c02").on_me_command()
+    nobody = module_for().on_me_command()
 
-    answer = module.on_me_command()
-    assert "oidc:stranger" in answer
-    assert FIX in answer
+    for answer in (named, nobody):
+        assert "Settings" not in answer
+        assert "sharing notice" not in answer
 
 
-def test_nobody_registered_at_all_says_so():
-    module = module_for([])
+def test_it_adds_nothing_beyond_the_login():
+    """No device, no about text, no per-bot note — there is no profile left."""
+    answer = module_for(login="self-hosted:7f3c02").on_me_command()
 
-    answer = module.on_me_command()
-    assert "registered nobody on this gateway" in answer
-    assert FIX in answer
+    assert "Device" not in answer
+    assert "About" not in answer
+    assert "Nothing beyond this login is added to this bot's prompt." in answer
 
 
-def test_an_essay_cannot_become_the_answer():
-    module = module_for([("7f3c02", bag({"7f3c02": person(about="x" * 5000)}))])
+def test_an_absurd_bot_name_cannot_break_the_cap():
+    module = module_for(login="self-hosted:7f3c02")
+    module.runtime.bot = "b" * 5000
 
     assert len(module.on_me_command()) <= MAX_CHARS
 
 
 def test_a_broken_report_is_not_a_broken_session():
-    module = module_for([("7f3c02", bag({"7f3c02": person()}))])
-    module.section = lambda: (_ for _ in ()).throw(RuntimeError("no metadata today"))
+    module = module_for(login="self-hosted:7f3c02")
+    module.sender_with_source = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no metadata today"))
 
     assert "could not work out" in module.on_me_command()

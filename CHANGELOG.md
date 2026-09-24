@@ -4,6 +4,33 @@ Notable changes per release. Capabilities are listed by the string the app tests
 for, because that is what the app tests for — a version number here is for
 people.
 
+## Unreleased
+
+### Removed
+
+- **The bot is no longer told anything the app wrote about the person or their device.** The app has
+  stopped sending it — the whole "Context about you" screen is gone on its side — and this plugin now
+  ignores that payload outright rather than waiting for every device to update: a name, an "about me",
+  a device model and OS, a timezone and locale, and a per-conversation note are none of them read from
+  `ui_meta` any more, on any app build. `context.system_prompt`, `context.per_bot`, `context.live` and
+  `context.orientation` are dropped from the advert to match — they claimed a feature that can no
+  longer be honoured on any gateway. `/me` no longer prints a profile either; it now reports only the
+  login the gateway resolved for the turn, which rung answered, and whether this build treats that rung
+  as confirmed. On a gateway without the fork's own identity binding, that profile was the only thing
+  telling the bot who it was talking to, so there the bot now knows only the login the gateway itself
+  resolved for the turn, if any.
+
+### Changed
+
+- **Working out who sent a turn is unaffected.** Working out who the gateway thinks sent a
+  turn — the hook's sender, the live session record, the session variables, a claim made over the
+  dashboard — still works exactly as before; only the profile that used to be attached to that answer
+  is gone. `context.turn_claim` is still advertised.
+- The `context.max_chars` and `context.default_user` settings are gone; there is no more rendered
+  section for either to bound or default. `context.session_vars` still fills in
+  `HERMES_SESSION_USER_ID`, but no longer has a profile to fill `_ID_ALT` or `_NAME` from — it blanks
+  them instead of leaving a stale name standing when the sender changes.
+
 ## 0.8.1 — 2026-09-23
 
 ### Changed

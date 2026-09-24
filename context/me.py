@@ -1,25 +1,27 @@
 """`/me`: who this bot thinks it is talking to, and how it worked that out.
 
-The context module decides whose notes go into a prompt, and until now the only
-way to find out what it decided was to read the prompt. That is a bad way to
-debug a feature whose whole job is to be invisible, and a worse way to answer
-the question a person actually has, which is "does my bot know who I am?".
+Until HERM-119 this also reported a profile the app had written about the
+person — their name, device, timezone, locale, what they had written about
+themselves. That went with the app's own "Context about you"; this report of
+it goes with it too, because there is nothing left to report: no profile is
+added to a bot's prompt any more, on any gateway, whatever the app sends.
 
-So the plugin answers it directly. `/me` runs in the session, resolves exactly
-what a turn would resolve, and prints it. It does not call the model: there is
-nothing here a model could add, and a person checking whether their identity
-reached the gateway should not have to pay for a turn to find out.
+So the whole answer is the sender resolution: the login the gateway worked a
+turn's sender out to be, which rung answered, and whether that rung is one
+this build actually treats as confirmed (`render.VERIFIED_RUNGS`) or merely
+assumed. It does not call the model: there is nothing here a model could add,
+and a person checking whether the gateway knows who they are should not have
+to pay for a turn to find out.
 
-The answer names ids, and deliberately nothing else. The login id and the
-registered id are the person's own and are the entire point of the report; no
-token, endpoint, key or configuration value goes anywhere near it.
+The answer names a login, and deliberately nothing else. It is the person's
+own and is the entire point of the report; no token, endpoint, key or
+configuration value goes anywhere near it.
 """
 
 from __future__ import annotations
 
 import logging
-import time
-from typing import Any, List, Optional
+from typing import Any, Optional
 
 from .render import (
     BY_APP_DEFAULT,
@@ -27,13 +29,10 @@ from .render import (
     BY_CONFIGURED,
     BY_HOOK,
     BY_LIVE_SESSION,
-    BY_NOBODY,
     BY_ONLY_USER,
     BY_PLATFORM,
     BY_SESSION_VARS,
-    ContextSection,
-    UserContext,
-    attribution,
+    VERIFIED_RUNGS,
 )
 
 logger = logging.getLogger(__name__)
@@ -43,132 +42,52 @@ DESCRIPTION = "Who this bot thinks it is talking to, and how it worked that out.
 
 # The answer is read in a terminal, so it is bounded like everything else here.
 MAX_CHARS = 2000
-ABOUT_CHARS = 240
 
-# One sentence per rung of the resolution order.
+# One sentence per rung of the resolution order. `BY_NOBODY` has none of its
+# own — see the "nobody" branch below, which is worded for that case directly
+# rather than through this table.
 RUNGS = {
-    BY_CLAIM: "the person who claimed this turn from the app, signed in to the dashboard",
+    BY_CLAIM: "a turn claim from the app, signed in to the dashboard",
     BY_HOOK: "the sender Hermes handed the hook, which on a shared chat is whoever opened it",
     BY_PLATFORM: "the sender Hermes handed the hook, from a platform that names one per message",
     BY_LIVE_SESSION: "the login the gateway admitted this session under",
     BY_SESSION_VARS: "the login bound into this session's variables",
     BY_CONFIGURED: "the configured default (context.default_user)",
-    BY_APP_DEFAULT: "the default the app set",
+    BY_APP_DEFAULT: "the app default",
     BY_ONLY_USER: "the only person registered on this gateway",
-    BY_NOBODY: "nobody",
 }
 
-# And when a rung was not established at all. `attribution` answers `""` for a
-# caller that resolved a sender without saying where it came from, and a report
-# that invented a rung for that would be the one thing this command is for.
+# And when a rung was not established at all. A caller that resolved a sender
+# without saying where it came from gets this rather than a guessed rung.
 UNSAID = "somewhere this build cannot name"
-
-# What to do about an answer of "nobody". It is one line because it is one
-# action, and the person reading this is standing in front of the app.
-FIX = "To fix: accept the sharing notice in Hermie's Settings → Context, then send a message."
 
 
 def _line(label: str, value: str) -> str:
     return f"{label + ':':<12}{value}"
 
 
-def _when(stamp: int) -> str:
-    if not stamp:
-        return "no update time"
-    try:
-        return "updated " + time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(stamp))
-    except Exception:
-        return "no update time"
-
-
-def _origin(section: ContextSection, user: UserContext) -> str:
-    """Which of the app's own ui_meta keys this entry was read out of."""
-    from .. import uimeta
-
-    owner = section.origins.get(user.user_id)
-    if owner is None:
-        return "the app's metadata"
-    key = uimeta.app_key_for(owner)
-    return key if owner else f"{key} (the shared key, which the app is moving away from)"
-
-
-def _person(
-    section: ContextSection, user: UserContext, rung: str, sender_id: str, bot: str, by_sender: bool
-) -> List[str]:
-    lines = [_line("Talking to", user.display_name or "(no display name set)")]
-    lines.append(_line("Worked out", f"from {RUNGS.get(rung) or UNSAID}"))
-
-    if sender_id and by_sender:
-        if sender_id == user.user_id:
-            lines.append(_line("Login", sender_id))
-        else:
-            lines.append(_line("Login", f"{sender_id} → matched the registered id {user.user_id}"))
-    else:
-        lines.append(_line("Registered", user.user_id))
-        if sender_id:
-            # A sender that named nobody is worth seeing: it is the difference
-            # between "the gateway said nothing" and "it said someone we have
-            # never heard of", and only one of those is the app's problem.
-            lines.append(_line("Sender", f"{sender_id} (no entry for this id)"))
-
-    device = " running ".join(part for part in (user.device_model, user.device_os) if part)
-    if device:
-        lines.append(_line("Device", device + (f", app {user.app_version}" if user.app_version else "")))
-    where = ", ".join(part for part in (user.timezone, user.locale) if part)
-    if where:
-        lines.append(_line("Dates", where))
-    if user.about:
-        about = user.about if len(user.about) <= ABOUT_CHARS else user.about[: ABOUT_CHARS - 1].rstrip() + "…"
-        lines.append(_line("About", about))
-    note = user.per_bot.get(bot) if bot else ""
-    if note:
-        lines.append(_line("This bot", note))
-    lines.append(_line("From", f"{_origin(section, user)}, {_when(user.updated_at)}"))
-    return lines
-
-
-def _nobody(section: ContextSection, sender_id: str) -> List[str]:
-    if not section.users:
-        why = "the app has registered nobody on this gateway"
-    elif sender_id:
-        why = f"the gateway named {sender_id}, which matches none of the {len(section.users)} people registered here"
-    else:
-        why = (
-            f"the gateway named nobody and {len(section.users)} people are registered here, "
-            "so there is no way to tell which of them is asking"
-        )
-    return [
-        _line("Talking to", "nobody"),
-        _line("Because", why),
-        "",
-        "No context is added to this bot's prompt.",
-        FIX,
-    ]
-
-
 def answer(module: Any, raw_args: str = "") -> Optional[str]:
     """The whole command. Never raises: a broken report is not a broken session."""
     try:
         bot = module.runtime.bot_name()
-        section = module.section()
         sender_id, source = module.sender_with_source()
-        # One definition of "which rung named this person", shared with the
-        # section that cautions on it and the turn that asserts on it: a report
-        # that disagreed with the prompt about that would be worse than none.
-        user, rung, by_sender = attribution(
-            section,
-            sender_id=sender_id,
-            sender_source=source,
-            configured_default=module.configured_default,
-        )
         lines = [f"Hermie context for {bot}", ""]
-        lines += (
-            _person(section, user, rung, sender_id, bot, by_sender)
-            if user is not None
-            else _nobody(section, sender_id)
-        )
+        if sender_id:
+            lines.append(_line("Login", sender_id))
+            lines.append(_line("Worked out", f"from {RUNGS.get(source) or UNSAID}"))
+            lines.append(
+                _line(
+                    "Confirmed",
+                    "yes" if source in VERIFIED_RUNGS else "no — the gateway has not confirmed who is sending",
+                )
+            )
+        else:
+            lines.append(_line("Login", "nobody"))
+            lines.append(_line("Because", "the gateway has not named anyone for this session"))
+        lines.append("")
+        lines.append("Nothing beyond this login is added to this bot's prompt.")
         text = "\n".join(lines)
         return text if len(text) <= MAX_CHARS else text[: MAX_CHARS - 1].rstrip() + "…"
     except Exception as exc:
-        logger.warning("hermie: could not report the resolved context: %s", exc)
+        logger.warning("hermie: could not report the resolved sender: %s", exc)
         return "hermie: could not work out who this bot is talking to; see the gateway log."
