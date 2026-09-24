@@ -76,7 +76,7 @@ PLUGIN_VERSION = "0.9.0"
 
 # Where an update comes from, named here so the advert and the update check
 # cannot disagree about which repository this plugin is.
-REPO = "fullstackstudio-nl/hermie-plugin"
+REPO = "fullstackstudio-org/hermie-plugin"
 
 # The shape of the `hermie-plugin` ui_meta key. Bumped only when an existing
 # field changes meaning — adding a field does not bump it, because a reader that

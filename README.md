@@ -10,7 +10,7 @@ devices that want notifications write themselves into the gateway's own profile
 metadata; the plugin reads that from the inside.
 
 ```
-hermes plugins install fullstackstudio-nl/hermie-plugin --enable
+hermes plugins install fullstackstudio-org/hermie-plugin --enable
 hermes gateway restart
 ```
 

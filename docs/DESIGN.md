@@ -1635,7 +1635,7 @@ Unchanged from ADR-0017, with three differences, all of them reductions.
 ## 8. Install
 
 ```
-hermes plugins install fullstackstudio-nl/hermie-plugin --enable
+hermes plugins install fullstackstudio-org/hermie-plugin --enable
 hermes gateway restart
 ```
 

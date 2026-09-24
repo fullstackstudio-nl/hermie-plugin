@@ -14,7 +14,7 @@ description: >-
   third-party relay.
 author: FullStack Studio
 license: MIT
-homepage: https://github.com/fullstackstudio-nl/hermie-plugin
+homepage: https://github.com/fullstackstudio-org/hermie-plugin
 kind: standalone
 tags:
   - notifications

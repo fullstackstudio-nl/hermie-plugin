@@ -103,4 +103,4 @@ shipping step. Cutting one:
    sentences — what changed, the way you'd tell a colleague, not a list of
    commit subjects or file names. Three to six bullets is usually right.
    End with a link to the commit comparison for anyone who wants the detail:
-   `https://github.com/fullstackstudio-nl/hermie-plugin/compare/v<previous>...v<version>`
+   `https://github.com/fullstackstudio-org/hermie-plugin/compare/v<previous>...v<version>`
