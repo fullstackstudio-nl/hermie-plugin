@@ -4,7 +4,7 @@ Notable changes per release. Capabilities are listed by the string the app tests
 for, because that is what the app tests for — a version number here is for
 people.
 
-## Unreleased
+## 0.9.0 — 2026-09-24
 
 ### Removed
 
